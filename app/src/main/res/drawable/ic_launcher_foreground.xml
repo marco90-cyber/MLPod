@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- scocca -->
+    <path
+        android:fillColor="#FFE9E9EC"
+        android:pathData="M38,22 L70,22 A6,6 0 0 1 76,28 L76,80 A6,6 0 0 1 70,86 L38,86 A6,6 0 0 1 32,80 L32,28 A6,6 0 0 1 38,22 Z" />
+    <!-- schermo -->
+    <path
+        android:fillColor="#FF2B6CD8"
+        android:pathData="M37,27 L71,27 L71,49 L37,49 Z" />
+    <!-- ghiera -->
+    <path
+        android:fillColor="#FFB9BBC2"
+        android:pathData="M54,67.5 m-14,0 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0" />
+    <!-- centro -->
+    <path
+        android:fillColor="#FFE9E9EC"
+        android:pathData="M54,67.5 m-5.5,0 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0" />
+</vector>
