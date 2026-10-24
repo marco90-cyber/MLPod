@@ -34,6 +34,7 @@ fun AppEnv.rootScreen(): MenuScreen = MenuScreen("MLPod", split = true) {
         MenuItem("Musica", chevron = true) { nav.push(musicScreen()) },
         MenuItem("Mescola brani") { shuffleAll() },
         MenuItem("Mescola album") { shuffleAlbums() },
+        MenuItem("EQ", chevron = true) { overlay = Overlay.Equalizer },
         MenuItem("Impostazioni", chevron = true) { nav.push(settingsScreen()) },
         MenuItem("In riproduzione", chevron = true, dimmed = engine.currentTrack == null) {
             if (engine.currentTrack != null) openNowPlaying()

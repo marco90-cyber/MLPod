@@ -111,9 +111,9 @@ class Feedback(context: Context, private val settings: Settings) {
         val sp = pool ?: return
         if (!ready) return
         val vol = when (settings.clickVolume) {
-            0 -> 0.3f
-            1 -> 0.6f
-            else -> 1f
+            0 -> 0.06f
+            1 -> 0.15f
+            else -> 0.30f
         }
         try {
             sp.play(clickId, vol, vol, 1, 0, 1f)
@@ -141,7 +141,7 @@ class Feedback(context: Context, private val settings: Settings) {
             val tone = sin(2.0 * PI * 2300.0 * t) * 0.55 + sin(2.0 * PI * 4100.0 * t) * 0.25
             val noise = (rnd.nextDouble() * 2.0 - 1.0) * 0.35 * exp(-t * 600.0)
             val s = ((tone + noise) * env).coerceIn(-1.0, 1.0)
-            pcm.putShort((s * 32000).toInt().toShort())
+            pcm.putShort((s * 16000).toInt().toShort())
         }
         val data = pcm.array()
         val out = ByteArrayOutputStream()
