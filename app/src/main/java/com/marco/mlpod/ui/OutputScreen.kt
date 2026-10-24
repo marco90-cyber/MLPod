@@ -75,7 +75,7 @@ private fun readDevices(ctx: Context): List<OutDevice> {
         if (d.sampleRates.isNotEmpty()) {
             det.add("Frequenze dichiarate: " + d.sampleRates.sorted().joinToString(", ") { "${it / 1000.0} kHz".replace(".0 ", " ") })
         }
-        val enc = d.encodings.mapNotNull { encName(it) }.distinct()
+        val enc = d.encodings.toList().mapNotNull { encName(it) }.distinct()
         if (enc.isNotEmpty()) det.add("Formati dichiarati: " + enc.joinToString(", "))
         if (d.channelCounts.isNotEmpty()) det.add("Canali dichiarati: " + d.channelCounts.sorted().joinToString(", "))
         val name = d.productName?.toString().orEmpty()
