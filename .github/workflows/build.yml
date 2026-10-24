@@ -36,10 +36,26 @@ jobs:
           ./dsp_selftest
 
       - name: Test unitari Kotlin
-        run: gradle :app:testDebugUnitTest --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest --stacktrace 2>&1 | tee out_test.txt
+          st=${PIPESTATUS[0]}
+          if [ $st -ne 0 ]; then
+            grep -E "^e: |FAILED|AssertionError|Exception|expected|error:" out_test.txt | head -25 | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+          fi
+          exit $st
 
       - name: Compila APK (release)
-        run: gradle :app:assembleRelease --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle :app:assembleRelease --stacktrace 2>&1 | tee out_build.txt
+          st=${PIPESTATUS[0]}
+          if [ $st -ne 0 ]; then
+            grep -E "^e: |error:|What went wrong|FAILED|Execution failed|CMake|ndk" out_build.txt | head -25 | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+          fi
+          exit $st
 
       - name: Rinomina APK
         run: |
