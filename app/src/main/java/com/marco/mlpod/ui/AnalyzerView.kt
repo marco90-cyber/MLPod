@@ -222,7 +222,6 @@ fun AnalyzerView(env: AppEnv) {
     }
     LaunchedEffect(env.analyzerResetToken) { st.reset() }
 
-    @Suppress("UNUSED_VARIABLE")
     val frame = st.tick
 
     Column(
@@ -231,18 +230,18 @@ fun AnalyzerView(env: AppEnv) {
             .background(AnBg)
             .padding(horizontal = 6.dp, vertical = 4.dp)
     ) {
-        LevelSection(st)
+        LevelSection(st, frame)
         Spacer(Modifier.height(4.dp))
         Row(
             Modifier.fillMaxWidth().height(118.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            GonioPanel(st, Modifier.weight(1f))
+            GonioPanel(st, frame, Modifier.weight(1f))
             PpmDial("L", st.ppm[0], st.ppmMax[0], env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
             PpmDial("R", st.ppm[1], st.ppmMax[1], env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
         }
         Spacer(Modifier.height(4.dp))
-        RtaPanel(env, st, Modifier.weight(1f))
+        RtaPanel(env, st, frame, Modifier.weight(1f))
     }
 }
 
@@ -252,7 +251,7 @@ private fun Mono(text: String, color: Color = AnText, size: Int = 10, modifier: 
 }
 
 @Composable
-private fun LevelSection(st: AnalyzerState) {
+private fun LevelSection(st: AnalyzerState, frame: Int) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -264,6 +263,7 @@ private fun LevelSection(st: AnalyzerState) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Mono(if (c == 0) "L" else "R", Color.White, 11, Modifier.padding(end = 6.dp))
                 Canvas(Modifier.weight(1f).height(11.dp)) {
+                    st.tick
                     drawRect(Color(0xFF262830), size = size)
                     val w = size.width
                     val brush = Brush.horizontalGradient(
@@ -288,7 +288,7 @@ private fun LevelSection(st: AnalyzerState) {
 }
 
 @Composable
-private fun GonioPanel(st: AnalyzerState, modifier: Modifier) {
+private fun GonioPanel(st: AnalyzerState, frame: Int, modifier: Modifier) {
     Column(
         modifier
             .clip(RoundedCornerShape(8.dp))
@@ -298,6 +298,7 @@ private fun GonioPanel(st: AnalyzerState, modifier: Modifier) {
     ) {
         Box(Modifier.weight(1f).aspectRatio(1f)) {
             Canvas(Modifier.fillMaxSize()) {
+                st.tick
                 val cx = size.width / 2f
                 val cy = size.height / 2f
                 val rad = min(cx, cy) - 2f
@@ -318,6 +319,7 @@ private fun GonioPanel(st: AnalyzerState, modifier: Modifier) {
         }
         Spacer(Modifier.height(2.dp))
         Canvas(Modifier.fillMaxWidth().height(8.dp)) {
+            st.tick
             drawRect(Color(0xFF262830), size = size)
             val mid = size.width / 2f
             val x = mid + st.corr * mid
@@ -407,7 +409,7 @@ private fun PpmDial(label: String, value: Float, max: Float, ref: Float, modifie
 }
 
 @Composable
-private fun RtaPanel(env: AppEnv, st: AnalyzerState, modifier: Modifier) {
+private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, modifier: Modifier) {
     val sel = env.analyzerBand.coerceIn(0, NB - 1)
     Column(
         modifier
@@ -431,6 +433,7 @@ private fun RtaPanel(env: AppEnv, st: AnalyzerState, modifier: Modifier) {
                     }
                 }
         ) {
+            st.tick
             val w = size.width
             val h = size.height
             val bw = w / NB
