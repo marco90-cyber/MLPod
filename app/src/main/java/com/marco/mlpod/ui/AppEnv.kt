@@ -46,6 +46,8 @@ class MenuScreen(
 
 object NowPlayingScreen : Screen()
 
+object AnalyzerScreen : Screen()
+
 class Entry(val screen: Screen) {
     var selected by mutableIntStateOf(0)
     val listState = LazyListState()
@@ -94,6 +96,10 @@ class AppEnv(val app: MLPodApp) {
     var showVolume by mutableStateOf(false)
     var volumeToken by mutableIntStateOf(0)
 
+    /** Banda dell'analizzatore selezionata (0..30, 17 = 1 kHz) e richiesta di azzeramento picchi. */
+    var analyzerBand by mutableIntStateOf(17)
+    var analyzerResetToken by mutableIntStateOf(0)
+
     val wheel = WheelController(this)
 
     init {
@@ -104,6 +110,10 @@ class AppEnv(val app: MLPodApp) {
         app.appScope.launch {
             library.rescan(settings.folders, rebuild)
         }
+    }
+
+    fun openAnalyzer() {
+        nav.push(AnalyzerScreen)
     }
 
     fun openNowPlaying() {
@@ -160,6 +170,13 @@ class WheelController(private val env: AppEnv) {
                 }
                 true
             }
+            AnalyzerScreen -> {
+                val n = (env.analyzerBand + delta).coerceIn(0, 30)
+                if (n != env.analyzerBand) {
+                    env.analyzerBand = n
+                    true
+                } else false
+            }
         }
     }
 
@@ -175,6 +192,7 @@ class WheelController(private val env: AppEnv) {
                 env.scrubMode = !env.scrubMode
                 env.volumeToken++
             }
+            AnalyzerScreen -> env.analyzerResetToken++
         }
     }
 

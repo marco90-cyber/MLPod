@@ -22,6 +22,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -121,19 +124,46 @@ fun EqualizerScreen(env: AppEnv) {
             Spacer(Modifier.width(4.dp))
         }
 
-        // numero di bande
+        // numero di bande (menu a tendina)
+        var bandsMenu by remember { mutableStateOf(false) }
         Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Bande", color = Color(0xFF9AA0AA), fontSize = 13.sp, modifier = Modifier.padding(end = 4.dp))
-            for (n in EqConfig.MIN_BANDS..EqConfig.MAX_BANDS) {
-                Chip("$n", selected = eq.bandCount == n) {
-                    env.feedback.tapScreen()
-                    settings.updateEq { it.withBandCount(n) }
+            Text("Bande", color = Color(0xFF9AA0AA), fontSize = 13.sp, modifier = Modifier.padding(end = 8.dp))
+            Box {
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ChipColor)
+                        .clickable { env.feedback.tapScreen(); bandsMenu = true }
+                        .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("${eq.bandCount} bande", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Filled.ArrowDropDown, null, tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = bandsMenu,
+                    onDismissRequest = { bandsMenu = false },
+                    modifier = Modifier.background(PanelColor)
+                ) {
+                    for (n in EqConfig.MIN_BANDS..EqConfig.MAX_BANDS) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "$n bande",
+                                    color = if (n == eq.bandCount) Accent else Color.White,
+                                    fontWeight = if (n == eq.bandCount) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                env.feedback.tapScreen()
+                                settings.updateEq { it.withBandCount(n) }
+                                bandsMenu = false
+                            }
+                        )
+                    }
                 }
             }
         }

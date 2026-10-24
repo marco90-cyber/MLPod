@@ -35,7 +35,8 @@ class AudioEngine(
     private val settings: Settings,
     private val library: Library,
 ) {
-    val eqProcessor = EqAudioProcessor()
+    val analyzer = Analyzer()
+    val eqProcessor = EqAudioProcessor(analyzer)
 
     val player: ExoPlayer
 

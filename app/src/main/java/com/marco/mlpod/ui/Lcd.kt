@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -124,6 +125,7 @@ fun Lcd(env: AppEnv) {
             when (val s = e.screen) {
                 is MenuScreen -> MenuView(env, e, s)
                 NowPlayingScreen -> NowPlayingView(env)
+                AnalyzerScreen -> AnalyzerView(env)
             }
         }
     }
@@ -136,6 +138,7 @@ private fun LcdHeader(env: AppEnv, entry: Entry) {
     val title = when (val s = entry.screen) {
         is MenuScreen -> s.title
         NowPlayingScreen -> "In riproduzione"
+        AnalyzerScreen -> "Analizzatore"
     }
     val canBack = env.nav.stack.size > 1
     Box(
@@ -619,6 +622,9 @@ private fun NowPlayingView(env: AppEnv) {
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            ToggleIcon(Icons.Filled.Equalizer, false) {
+                env.feedback.tapScreen(); env.openAnalyzer()
+            }
             ToggleIcon(Icons.Filled.Shuffle, engine.shuffleOn) {
                 env.feedback.tapScreen(); engine.toggleShuffle()
             }
@@ -627,6 +633,19 @@ private fun NowPlayingView(env: AppEnv) {
                 engine.repeatMode != 0
             ) {
                 env.feedback.tapScreen(); engine.cycleRepeat()
+            }
+            Box(
+                Modifier
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.5.dp, Color(0xFF2F6FD6), RoundedCornerShape(8.dp))
+                    .clickable {
+                        env.feedback.tapScreen(); env.overlay = Overlay.Equalizer
+                    }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("EQ", color = Color(0xFF2F6FD6), fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

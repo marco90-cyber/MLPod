@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
  * Ingressi supportati: PCM 16 bit, 24 bit, 32 bit e float.
  * Uscita: 16 bit se l'ingresso è 16 bit, altrimenti float (qualità Hi-Res).
  */
-class EqAudioProcessor : BaseAudioProcessor() {
+class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
 
     @Volatile
     private var pending: EqConfig = EqConfig()
@@ -49,6 +49,7 @@ class EqAudioProcessor : BaseAudioProcessor() {
         sampleRate = inputAudioFormat.sampleRate
         channels = inputAudioFormat.channelCount
         encoding = enc
+        analyzer.sampleRate = sampleRate
         appliedVersion = -1
         stageCount = 0
         val outEnc = if (enc == C.ENCODING_PCM_16BIT) C.ENCODING_PCM_16BIT else C.ENCODING_PCM_FLOAT
@@ -124,18 +125,31 @@ class EqAudioProcessor : BaseAudioProcessor() {
         val frames = remaining / (bytesPerSample * ch)
         val samples = frames * ch
 
+        val tap = analyzer.enabled
+        var fl = 0f
+        var fr = 0f
+
         if (encoding == C.ENCODING_PCM_16BIT) {
             val out = replaceOutputBuffer(samples * 2)
-            if (bypass) {
-                for (i in 0 until samples) out.putShort(input.getShort())
-            } else {
-                for (f in 0 until frames) {
-                    for (c in 0 until ch) {
-                        val x = input.getShort().toInt() / 32768.0
+            for (f in 0 until frames) {
+                for (c in 0 until ch) {
+                    val raw = input.getShort()
+                    if (bypass) {
+                        out.putShort(raw)
+                        if (tap) {
+                            val v = raw / 32768f
+                            if (c == 0) fl = v else if (c == 1) fr = v
+                        }
+                    } else {
+                        val x = raw.toInt() / 32768.0
                         val y = filter(x, c).coerceIn(-1.0, 1.0)
                         out.putShort((y * 32767.0).roundToInt().toShort())
+                        if (tap) {
+                            if (c == 0) fl = y.toFloat() else if (c == 1) fr = y.toFloat()
+                        }
                     }
                 }
+                if (tap) analyzer.push(fl, if (ch > 1) fr else fl)
             }
             out.flip()
         } else {
@@ -153,8 +167,13 @@ class EqAudioProcessor : BaseAudioProcessor() {
                         else -> input.getInt() / 2147483648.0
                     }
                     val y = if (bypass) x else filter(x, c)
-                    out.putFloat(y.coerceIn(-1.0, 1.0).toFloat())
+                    val yf = y.coerceIn(-1.0, 1.0).toFloat()
+                    out.putFloat(yf)
+                    if (tap) {
+                        if (c == 0) fl = yf else if (c == 1) fr = yf
+                    }
                 }
+                if (tap) analyzer.push(fl, if (ch > 1) fr else fl)
             }
             out.flip()
         }
