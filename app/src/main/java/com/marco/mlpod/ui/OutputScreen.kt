@@ -70,7 +70,7 @@ private fun encName(e: Int): String? = when (e) {
 
 private fun readDevices(ctx: Context): List<OutDevice> {
     val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return emptyList()
-    return am.getDevices(AudioManager.GET_DEVICES_SINK).map { d ->
+    return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { d ->
         val det = ArrayList<String>()
         if (d.sampleRates.isNotEmpty()) {
             det.add("Frequenze dichiarate: " + d.sampleRates.sorted().joinToString(", ") { "${it / 1000.0} kHz".replace(".0 ", " ") })
