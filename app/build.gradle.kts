@@ -7,6 +7,8 @@ plugins {
 android {
     namespace = "com.marco.mlpod"
     compileSdk = 35
+    // Versione NDK: su GitHub Actions viene rilevata dal runner (ANDROID_NDK_VERSION).
+    System.getenv("ANDROID_NDK_VERSION")?.takeIf { it.isNotBlank() }?.let { ndkVersion = it }
 
     defaultConfig {
         applicationId = "com.marco.mlpod"
@@ -15,6 +17,15 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
         buildConfigField("String", "REPO_URL", "\"https://github.com/marco90-cyber/MLPod\"")
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {
@@ -66,4 +77,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-common:$media3")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

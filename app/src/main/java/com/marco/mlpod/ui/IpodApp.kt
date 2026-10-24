@@ -118,6 +118,13 @@ private fun IpodContent(env: AppEnv) {
             EqualizerScreen(env)
         }
         AnimatedVisibility(
+            visible = env.overlay == Overlay.Output,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it },
+        ) {
+            OutputScreen(env)
+        }
+        AnimatedVisibility(
             visible = env.overlay == Overlay.Log,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },

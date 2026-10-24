@@ -14,20 +14,25 @@ import kotlin.math.sqrt
 
 /**
  * Configurazione completa dell'equalizzatore:
- *  - da 3 a 12 bande parametriche, con frequenza selezionabile per ogni banda
- *  - preamp
- *  - manopole Bassi / Alti (shelving) con frequenza selezionabile
+ *  - da 3 a 32 bande parametriche, con frequenza, guadagno e Q per ogni banda
+ *  - preamp e (opzionale) headroom automatico
+ *  - manopole Bassi / Alti (shelving, boost e attenuazione) con frequenza selezionabile
+ *  - limiter look-ahead (attivo solo quando c'è elaborazione)
  */
 data class EqConfig(
     val enabled: Boolean = false,
     val bandCount: Int = 10,
     val freqs: List<Float> = defaultFreqs(10),
     val gains: List<Float> = List(10) { 0f },
+    val qs: List<Float> = autoQs(defaultFreqs(10)),
     val preampDb: Float = 0f,
-    val bassPercent: Int = 0,
+    /** 0..100, 50 = neutro (0 dB), 0 = -12 dB, 100 = +12 dB. */
+    val bassPercent: Int = 50,
     val bassFreq: Float = 100f,
-    val treblePercent: Int = 0,
+    val treblePercent: Int = 50,
     val trebleFreq: Float = 10000f,
+    val limiterOn: Boolean = true,
+    val autoHeadroom: Boolean = false,
 ) {
     /** Cambia il numero di bande ricampionando la curva attuale. */
     fun withBandCount(n: Int): EqConfig {
@@ -35,8 +40,18 @@ data class EqConfig(
         if (count == bandCount) return this
         val newFreqs = defaultFreqs(count)
         val newGains = newFreqs.map { f -> interpolate(freqs, gains, f) }
-        return copy(bandCount = count, freqs = newFreqs, gains = newGains)
+        return copy(bandCount = count, freqs = newFreqs, gains = newGains, qs = autoQs(newFreqs))
     }
+
+    fun withQ(index: Int, q: Float): EqConfig {
+        if (index !in qs.indices) return this
+        val list = qs.toMutableList()
+        list[index] = q.coerceIn(MIN_Q, MAX_Q)
+        return copy(qs = list)
+    }
+
+    /** Ripristina il Q automatico (in base alla distanza fra le bande). */
+    fun withAutoQ(): EqConfig = copy(qs = autoQs(freqs))
 
     fun withGain(index: Int, gainDb: Float): EqConfig {
         if (index !in gains.indices) return this
@@ -60,22 +75,38 @@ data class EqConfig(
         return copy(gains = freqs.map { f -> interpolate(fs, gs, f).coerceIn(-GAIN_RANGE, GAIN_RANGE) })
     }
 
-    /** Q di una banda, calcolato in base alla distanza dalle bande vicine. */
-    fun qFor(index: Int): Double {
-        val n = freqs.size
-        if (n < 2) return 1.0
-        val lo = if (index > 0) freqs[index - 1] else freqs[index]
-        val hi = if (index < n - 1) freqs[index + 1] else freqs[index]
-        val octaves = if (hi > lo) (ln((hi / lo).toDouble()) / ln(2.0)) / (if (index in 1 until n - 1) 2.0 else 1.0) else 1.0
-        val q = 1.0 / (2.0 * sinh(ln(2.0) / 2.0 * octaves.coerceAtLeast(0.2)))
-        return q.coerceIn(0.4, 5.0)
+    /** Q effettivo di una banda. */
+    fun qFor(index: Int): Double = (qs.getOrNull(index) ?: 1f).toDouble().coerceIn(MIN_Q.toDouble(), MAX_Q.toDouble())
+
+    /**
+     * Picco massimo di amplificazione (dB, >= 0) di bande + bassi + alti, preamp escluso.
+     * Serve per l'headroom automatico.
+     */
+    fun boostPeakDb(fs: Double = 48000.0): Double {
+        val st = EqMath.stages(this, fs)
+        var peak = 0.0
+        for (i in 0 until 256) {
+            val f = 20.0 * (20000.0 / 20.0).pow(i / 255.0)
+            var t = 0.0
+            for (c in st) t += EqMath.magnitudeDb(c, fs, f)
+            if (t > peak) peak = t
+        }
+        return peak
     }
+
+    /** Preamp effettivo in dB: preamp scelto meno l'headroom automatico (se attivo). */
+    fun effectivePreampDb(fs: Double): Double =
+        if (!enabled) 0.0 else preampDb - (if (autoHeadroom) boostPeakDb(fs) else 0.0)
+
+    /** True se serve elaborare l'audio (altrimenti bypass reale). */
+    fun dspActive(): Boolean =
+        enabled || bassPercent != 50 || treblePercent != 50
 
     /** Risposta in dB a una certa frequenza (per il grafico). */
     fun responseDb(f: Double, fs: Double = 48000.0): Double {
         var total = 0.0
         for (c in EqMath.stages(this, fs)) total += EqMath.magnitudeDb(c, fs, f)
-        if (enabled) total += preampDb
+        if (enabled) total += preampDb - (if (autoHeadroom) boostPeakDb(fs) else 0.0)
         return total
     }
 
@@ -85,6 +116,10 @@ data class EqConfig(
         o.put("bandCount", bandCount)
         o.put("freqs", JSONArray(freqs.map { it.toDouble() }))
         o.put("gains", JSONArray(gains.map { it.toDouble() }))
+        o.put("qs", JSONArray(qs.map { it.toDouble() }))
+        o.put("toneV", 2)
+        o.put("limiter", limiterOn)
+        o.put("autoHeadroom", autoHeadroom)
         o.put("preamp", preampDb.toDouble())
         o.put("bass", bassPercent)
         o.put("bassFreq", bassFreq.toDouble())
@@ -95,10 +130,25 @@ data class EqConfig(
 
     companion object {
         const val MIN_BANDS = 3
-        const val MAX_BANDS = 12
+        const val MAX_BANDS = 32
+        const val MIN_Q = 0.2f
+        const val MAX_Q = 12f
         const val GAIN_RANGE = 12f
         const val MIN_FREQ = 20f
         const val MAX_FREQ = 20000f
+
+        /** Q automatico: sovrappone le bande adiacenti in base alla loro distanza in ottave. */
+        fun autoQs(freqs: List<Float>): List<Float> = List(freqs.size) { i -> autoQ(freqs, i).toFloat() }
+
+        fun autoQ(freqs: List<Float>, index: Int): Double {
+            val n = freqs.size
+            if (n < 2) return 1.0
+            val lo = if (index > 0) freqs[index - 1] else freqs[index]
+            val hi = if (index < n - 1) freqs[index + 1] else freqs[index]
+            val octaves = if (hi > lo) (ln((hi / lo).toDouble()) / ln(2.0)) / (if (index in 1 until n - 1) 2.0 else 1.0) else 1.0
+            val q = 1.0 / (2.0 * sinh(ln(2.0) / 2.0 * octaves.coerceAtLeast(0.2)))
+            return q.coerceIn(0.4, 5.0)
+        }
 
         fun defaultFreqs(n: Int): List<Float> = when (n) {
             3 -> listOf(100f, 1000f, 10000f)
@@ -148,16 +198,29 @@ data class EqConfig(
                 val ga = o.optJSONArray("gains")
                 val freqs = if (fa != null && fa.length() == n) List(n) { fa.getDouble(it).toFloat() } else defaultFreqs(n)
                 val gains = if (ga != null && ga.length() == n) List(n) { ga.getDouble(it).toFloat() } else List(n) { 0f }
+                val qa = o.optJSONArray("qs")
+                val qs = if (qa != null && qa.length() == n) {
+                    List(n) { qa.getDouble(it).toFloat().coerceIn(MIN_Q, MAX_Q) }
+                } else autoQs(freqs)
+                // Vecchio formato: manopole 0..100% = 0..+12 dB. Nuovo: 50% = neutro.
+                val v2 = o.optInt("toneV", 1) >= 2
+                fun tone(key: String): Int {
+                    val raw = o.optInt(key, if (v2) 50 else 0).coerceIn(0, 100)
+                    return if (v2) raw else 50 + raw / 2
+                }
                 EqConfig(
                     enabled = o.optBoolean("enabled", false),
                     bandCount = n,
                     freqs = freqs,
                     gains = gains,
+                    qs = qs,
                     preampDb = o.optDouble("preamp", 0.0).toFloat(),
-                    bassPercent = o.optInt("bass", 0).coerceIn(0, 100),
+                    bassPercent = tone("bass"),
                     bassFreq = o.optDouble("bassFreq", 100.0).toFloat(),
-                    treblePercent = o.optInt("treble", 0).coerceIn(0, 100),
+                    treblePercent = tone("treble"),
                     trebleFreq = o.optDouble("trebleFreq", 10000.0).toFloat(),
+                    limiterOn = o.optBoolean("limiter", true),
+                    autoHeadroom = o.optBoolean("autoHeadroom", false),
                 )
             } catch (_: Exception) {
                 EqConfig()
@@ -244,8 +307,8 @@ object EqMath {
         )
     }
 
-    /** Percentuale delle manopole -> dB (0..100% = 0..+12 dB). */
-    fun toneDb(percent: Int): Double = percent.coerceIn(0, 100) / 100.0 * 12.0
+    /** Posizione delle manopole -> dB (0..100, 50 = 0 dB, estremi = -12 / +12 dB). */
+    fun toneDb(percent: Int): Double = (percent.coerceIn(0, 100) - 50) / 50.0 * 12.0
 
     /**
      * Elenco fisso di stadi: [bassi, banda 0..N-1, alti].
@@ -255,7 +318,7 @@ object EqMath {
         val nyquistLimit = fs * 0.45
         val out = ArrayList<Coef>(cfg.bandCount + 2)
         out.add(
-            if (cfg.bassPercent > 0 && cfg.bassFreq < nyquistLimit)
+            if (cfg.bassFreq < nyquistLimit)
                 lowShelf(fs, cfg.bassFreq.toDouble(), toneDb(cfg.bassPercent)) else IDENTITY
         )
         for (i in 0 until cfg.bandCount) {
@@ -266,7 +329,7 @@ object EqMath {
             )
         }
         out.add(
-            if (cfg.treblePercent > 0 && cfg.trebleFreq < nyquistLimit)
+            if (cfg.trebleFreq < nyquistLimit)
                 highShelf(fs, cfg.trebleFreq.toDouble(), toneDb(cfg.treblePercent)) else IDENTITY
         )
         return out

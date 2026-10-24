@@ -12,7 +12,7 @@ import com.marco.mlpod.data.Track
 import com.marco.mlpod.util.AppLog
 import kotlinx.coroutines.launch
 
-enum class Overlay { None, Equalizer, Log }
+enum class Overlay { None, Equalizer, Log, Output }
 
 /** Azioni che richiedono l'Activity (selettore cartelle, browser, condivisione). */
 interface Actions {

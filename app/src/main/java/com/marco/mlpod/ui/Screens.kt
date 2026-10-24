@@ -296,6 +296,7 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
             sub = "Si applica al riavvio dell'app"
         ) { settings.hiResOutput = !settings.hiResOutput },
         MenuItem("Equalizzatore", chevron = true) { overlay = Overlay.Equalizer },
+        MenuItem("Uscita audio", chevron = true) { overlay = Overlay.Output },
     )
 }
 

@@ -23,6 +23,21 @@ jobs:
         with:
           gradle-version: 8.9
 
+      - name: Rileva NDK e CMake del runner
+        run: |
+          NDK_VER=$(ls "$ANDROID_HOME/ndk" | sort -V | tail -1)
+          echo "NDK trovato: $NDK_VER"
+          echo "ANDROID_NDK_VERSION=$NDK_VER" >> "$GITHUB_ENV"
+          ls "$ANDROID_HOME/cmake" || true
+
+      - name: Test nativi del motore DSP (g++ sul runner)
+        run: |
+          g++ -std=c++17 -O2 -Wall app/src/test/cpp/dsp_selftest.cpp -o dsp_selftest
+          ./dsp_selftest
+
+      - name: Test unitari Kotlin
+        run: gradle :app:testDebugUnitTest --stacktrace
+
       - name: Compila APK (release)
         run: gradle :app:assembleRelease --stacktrace
 

@@ -8,6 +8,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +30,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -55,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marco.mlpod.audio.EqConfig
+import com.marco.mlpod.audio.EqMath
 import com.marco.mlpod.audio.EqPresets
 import java.util.Locale
 import kotlin.math.abs
@@ -90,6 +95,9 @@ fun EqualizerScreen(env: AppEnv) {
     val settings = env.settings
     val eq = settings.eq
     var target by remember { mutableStateOf<FreqTarget?>(null) }
+    var saveDialog by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf("") }
+    var deletePreset by remember { mutableStateOf<String?>(null) }
 
     Column(
         Modifier
@@ -173,34 +181,70 @@ fun EqualizerScreen(env: AppEnv) {
         ResponseGraph(eq, Modifier.fillMaxWidth().height(74.dp))
         Spacer(Modifier.height(6.dp))
 
-        // cursori
-        Row(
+        // cursori (scorrono in orizzontale quando le bande sono tante)
+        BoxWithConstraints(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .clip(RoundedCornerShape(16.dp))
                 .background(PanelColor)
-                .padding(vertical = 8.dp, horizontal = 2.dp),
         ) {
-            BandColumn(
-                label = "Pre", value = eq.preampDb, freqText = "dB",
-                color = Color(0xFFB0B4BE), modifier = Modifier.weight(1f),
-                onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
-                onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
-                onFreqClick = null,
-            )
-            for (i in 0 until eq.bandCount) {
-                val hue = if (eq.bandCount > 1) 350f * i / (eq.bandCount - 1) else 0f
+            val cols = eq.bandCount + 1
+            val colW = maxOf(36.dp, (maxWidth - 4.dp) / cols)
+            Row(
+                Modifier
+                    .fillMaxHeight()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(vertical = 8.dp, horizontal = 2.dp),
+            ) {
                 BandColumn(
-                    label = fmtFreqShort(eq.freqs[i]), value = eq.gains[i], freqText = "Hz",
-                    color = Color.hsv((hue + 355f) % 360f, 0.85f, 1f), modifier = Modifier.weight(1f),
-                    onChange = { v -> settings.updateEq { it.withGain(i, v) } },
-                    onReset = { settings.updateEq { it.withGain(i, 0f) } },
-                    onFreqClick = { target = FreqTarget.Band(i) },
+                    label = "Pre", value = eq.preampDb, freqText = "dB",
+                    color = Color(0xFFB0B4BE), modifier = Modifier.width(colW),
+                    onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
+                    onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
+                    onFreqClick = null,
                 )
+                for (i in 0 until eq.bandCount) {
+                    val hue = if (eq.bandCount > 1) 350f * i / (eq.bandCount - 1) else 0f
+                    BandColumn(
+                        label = fmtFreqShort(eq.freqs[i]), value = eq.gains[i],
+                        freqText = "Q " + String.format(Locale.ITALY, "%.1f", eq.qFor(i)),
+                        color = Color.hsv((hue + 355f) % 360f, 0.85f, 1f), modifier = Modifier.width(colW),
+                        onChange = { v -> settings.updateEq { it.withGain(i, v) } },
+                        onReset = { settings.updateEq { it.withGain(i, 0f) } },
+                        onFreqClick = { target = FreqTarget.Band(i) },
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
+
+        // limiter, headroom, Q, uscita
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Chip("Limiter", selected = eq.limiterOn) {
+                env.feedback.tapScreen()
+                settings.updateEq { it.copy(limiterOn = !it.limiterOn) }
+            }
+            Chip("Auto-headroom", selected = eq.autoHeadroom) {
+                env.feedback.tapScreen()
+                settings.updateEq { it.copy(autoHeadroom = !it.autoHeadroom) }
+            }
+            Chip("Q auto", selected = false) {
+                env.feedback.tapScreen()
+                settings.updateEq { it.withAutoQ() }
+            }
+            Chip("Uscita audio", selected = false) {
+                env.feedback.tapScreen()
+                env.overlay = Overlay.Output
+            }
+        }
+        Spacer(Modifier.height(6.dp))
 
         // preset
         Row(
@@ -211,6 +255,17 @@ fun EqualizerScreen(env: AppEnv) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Preset", color = Color(0xFF9AA0AA), fontSize = 13.sp, modifier = Modifier.padding(end = 4.dp))
+            Chip("+ Salva", selected = false) {
+                env.feedback.tapScreen()
+                saveName = ""
+                saveDialog = true
+            }
+            for (up in settings.userPresets) {
+                Chip(up.name, selected = false, accent = true, onLongClick = { deletePreset = up.name }) {
+                    env.feedback.tapScreen()
+                    settings.eq = up.config.copy(enabled = true)
+                }
+            }
             for (p in EqPresets.all) {
                 Chip(p.name, selected = false) {
                     env.feedback.tapScreen()
@@ -249,15 +304,74 @@ fun EqualizerScreen(env: AppEnv) {
     target?.let { t ->
         FreqDialog(target = t, eq = eq, onDismiss = { target = null }) { newEq -> settings.eq = newEq }
     }
+
+    if (saveDialog) {
+        AlertDialog(
+            onDismissRequest = { saveDialog = false },
+            containerColor = Color(0xFF1E1F24),
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = { Text("Salva preset") },
+            text = {
+                OutlinedTextField(
+                    value = saveName,
+                    onValueChange = { saveName = it.take(24) },
+                    singleLine = true,
+                    label = { Text("Nome") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                        focusedLabelColor = Accent, unfocusedLabelColor = Color(0xFF9AA0AA),
+                        focusedBorderColor = Accent, unfocusedBorderColor = Color(0xFF4A4E58),
+                        cursorColor = Accent,
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = saveName.isNotBlank(),
+                    onClick = { settings.saveUserPreset(saveName, eq); saveDialog = false }
+                ) { Text("Salva") }
+            },
+            dismissButton = { TextButton(onClick = { saveDialog = false }) { Text("Annulla") } }
+        )
+    }
+
+    deletePreset?.let { name ->
+        AlertDialog(
+            onDismissRequest = { deletePreset = null },
+            containerColor = Color(0xFF1E1F24),
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = { Text("Elimina preset") },
+            text = { Text("Vuoi eliminare \"$name\"?") },
+            confirmButton = {
+                TextButton(onClick = { settings.deleteUserPreset(name); deletePreset = null }) { Text("Elimina") }
+            },
+            dismissButton = { TextButton(onClick = { deletePreset = null }) { Text("Annulla") } }
+        )
+    }
 }
 
 @Composable
-private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun Chip(
+    text: String,
+    selected: Boolean,
+    accent: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val click = rememberUpdatedState(onClick)
+    val long = rememberUpdatedState(onLongClick)
     Box(
         Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (selected) Accent else ChipColor)
-            .clickable(onClick = onClick)
+            .background(if (selected) Accent else if (accent) Color(0xFF1B3A40) else ChipColor)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { click.value() },
+                    onLongPress = { long.value?.invoke() }
+                )
+            }
             .padding(horizontal = 14.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -280,7 +394,10 @@ private fun ToneKnob(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("$percent%", color = Color(0xFF9AA0AA), fontSize = 14.sp)
+        Text(
+            String.format(Locale.ITALY, "%+.1f dB", EqMath.toneDb(percent)),
+            color = Color(0xFF9AA0AA), fontSize = 14.sp
+        )
         Spacer(Modifier.height(6.dp))
         Knob(value = percent, color = color, size = 110.dp, onTick = onTick, onChange = onChange)
         Spacer(Modifier.height(6.dp))
@@ -466,7 +583,7 @@ private fun FreqDialog(
     val current: Float
     when (target) {
         is FreqTarget.Band -> {
-            title = "Frequenza banda ${target.index + 1}"
+            title = "Banda ${target.index + 1}: frequenza e Q"
             min = EqConfig.MIN_FREQ
             max = EqConfig.MAX_FREQ
             current = eq.freqs.getOrElse(target.index) { 1000f }
@@ -520,6 +637,30 @@ private fun FreqDialog(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(fmtFreqLong(min), fontSize = 12.sp, color = Color(0xFF9AA0AA))
                     Text(fmtFreqLong(max), fontSize = 12.sp, color = Color(0xFF9AA0AA))
+                }
+                if (target is FreqTarget.Band) {
+                    val idx = target.index
+                    val q = eq.qFor(idx).toFloat()
+                    val qPos = (ln(q / EqConfig.MIN_Q) / ln(EqConfig.MAX_Q / EqConfig.MIN_Q)).coerceIn(0f, 1f)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "Q " + String.format(Locale.ITALY, "%.2f", q) + "  (larghezza: " +
+                            String.format(Locale.ITALY, "%.2f", 2.0 * Math.log(0.5 / q + Math.sqrt(0.25 / (q * q) + 1.0)) / Math.log(2.0)) +
+                            " ott.)",
+                        fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Accent
+                    )
+                    Slider(
+                        value = qPos,
+                        onValueChange = { p ->
+                            val v = EqConfig.MIN_Q * (EqConfig.MAX_Q / EqConfig.MIN_Q).pow(p)
+                            onEq(eq.withQ(idx, (v * 20f).roundToInt() / 20f))
+                        },
+                        colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("largo", fontSize = 12.sp, color = Color(0xFF9AA0AA))
+                        Text("stretto", fontSize = 12.sp, color = Color(0xFF9AA0AA))
+                    }
                 }
             }
         }

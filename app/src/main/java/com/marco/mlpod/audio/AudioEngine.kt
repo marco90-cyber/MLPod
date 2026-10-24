@@ -17,6 +17,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaController
@@ -57,6 +58,14 @@ class AudioEngine(
     var repeatMode by mutableIntStateOf(settings.repeatMode)
         private set
     var volume by mutableStateOf(settings.volume)
+        private set
+
+    /** Formato realmente aperto verso Android (AudioTrack), dichiarato da Media3. Vuoto = nessun dato. */
+    var trackSampleRate by mutableIntStateOf(0)
+        private set
+    var trackEncoding by mutableStateOf("")
+        private set
+    var trackOffload by mutableStateOf(false)
         private set
 
     private var queue: List<Track> = emptyList()
@@ -100,6 +109,24 @@ class AudioEngine(
             else -> Player.REPEAT_MODE_OFF
         }
         player.volume = settings.volume.coerceIn(0f, 1f)
+
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioTrackInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                audioTrackConfig: AudioSink.AudioTrackConfig,
+            ) {
+                trackSampleRate = audioTrackConfig.sampleRate
+                trackEncoding = when (audioTrackConfig.encoding) {
+                    C.ENCODING_PCM_16BIT -> "PCM 16 bit"
+                    C.ENCODING_PCM_24BIT -> "PCM 24 bit"
+                    C.ENCODING_PCM_32BIT -> "PCM 32 bit"
+                    C.ENCODING_PCM_FLOAT -> "PCM float 32 bit"
+                    else -> "codifica ${audioTrackConfig.encoding}"
+                }
+                trackOffload = audioTrackConfig.offload
+                AppLog.i("Audio", "AudioTrack aperto: $trackSampleRate Hz, $trackEncoding, offload=$trackOffload")
+            }
+        })
 
         eqProcessor.setConfig(settings.eq)
         settings.onEqChanged = { cfg -> eqProcessor.setConfig(cfg) }

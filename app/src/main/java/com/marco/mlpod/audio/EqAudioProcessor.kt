@@ -3,19 +3,36 @@ package com.marco.mlpod.audio
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
+import com.marco.mlpod.util.AppLog
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.pow
-import kotlin.math.roundToInt
+
+/** Stato reale del DSP, per la schermata "Uscita audio" (solo valori effettivamente in uso). */
+data class DspInfo(
+    val active: Boolean = false,
+    val sampleRate: Int = 0,
+    val channels: Int = 0,
+    val inEncoding: String = "",
+    val outEncoding: String = "",
+    val bypass: Boolean = true,
+    val limiter: Boolean = false,
+    val latencyMs: Float = 0f,
+    val stages: Int = 0,
+    val preampDb: Float = 0f,
+)
 
 /**
- * Elaborazione DSP in tempo reale: preamp + manopola bassi + N bande parametriche +
- * manopola alti, tutto con filtri biquad in doppia precisione.
+ * Elaborazione DSP in tempo reale tramite il motore nativo:
+ * preamp + bassi + N bande parametriche + alti (biquad in doppia precisione) e limiter look-ahead.
+ * I coefficienti sono calcolati in Kotlin ([EqMath]) e passati al motore nativo.
  *
- * Ingressi supportati: PCM 16 bit, 24 bit, 32 bit e float.
- * Uscita: 16 bit se l'ingresso è 16 bit, altrimenti float (qualità Hi-Res).
+ * Ingressi: PCM 16/24/32 bit e float. Uscita: 16 bit se l'ingresso è 16 bit, altrimenti float 32 bit.
+ * Con DSP spento si ha un bypass reale (PCM16 bit-exact).
  */
 class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
+
+    private val dsp = NativeDsp()
 
     @Volatile
     private var pending: EqConfig = EqConfig()
@@ -23,55 +40,79 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     @Volatile
     private var configVersion = 0
 
+    @Volatile
+    var info: DspInfo = DspInfo()
+        private set
+
     private var appliedVersion = -1
     private var sampleRate = 0
     private var channels = 0
     private var encoding = C.ENCODING_INVALID
-
-    private var stageCount = 0
-    private var coefs = DoubleArray(0)
-    private var state = DoubleArray(0)
-    private var preGain = 1.0
+    private var inEnc = NativeDsp.ENC_16
+    private var outEnc = NativeDsp.ENC_16
     private var bypass = true
+    private var limiterOn = false
+    private var stageCount = 0
+    private var preDb = 0f
+    private var scratchIn: ByteBuffer? = null
 
     fun setConfig(config: EqConfig) {
         pending = config
         configVersion++
     }
 
+    /** Massima riduzione del limiter dall'ultima lettura (dB). */
+    fun limiterReductionDb(reset: Boolean = true): Float = dsp.limiterReductionDb(reset)
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+        if (!dsp.isReady) return AudioProcessor.AudioFormat.NOT_SET
         val enc = inputAudioFormat.encoding
-        if (enc != C.ENCODING_PCM_16BIT && enc != C.ENCODING_PCM_FLOAT &&
-            enc != C.ENCODING_PCM_24BIT && enc != C.ENCODING_PCM_32BIT
-        ) {
-            return AudioProcessor.AudioFormat.NOT_SET
+        inEnc = when (enc) {
+            C.ENCODING_PCM_16BIT -> NativeDsp.ENC_16
+            C.ENCODING_PCM_24BIT -> NativeDsp.ENC_24
+            C.ENCODING_PCM_32BIT -> NativeDsp.ENC_32
+            C.ENCODING_PCM_FLOAT -> NativeDsp.ENC_FLOAT
+            else -> return AudioProcessor.AudioFormat.NOT_SET
         }
+        if (inputAudioFormat.channelCount !in 1..8) return AudioProcessor.AudioFormat.NOT_SET
         sampleRate = inputAudioFormat.sampleRate
         channels = inputAudioFormat.channelCount
         encoding = enc
         analyzer.sampleRate = sampleRate
+        outEnc = if (inEnc == NativeDsp.ENC_16) NativeDsp.ENC_16 else NativeDsp.ENC_FLOAT
+        dsp.configure(sampleRate, channels)
+        info = DspInfo(
+            sampleRate = sampleRate, channels = channels,
+            inEncoding = encName(inEnc), outEncoding = encName(outEnc),
+        )
         appliedVersion = -1
-        stageCount = 0
-        val outEnc = if (enc == C.ENCODING_PCM_16BIT) C.ENCODING_PCM_16BIT else C.ENCODING_PCM_FLOAT
-        return AudioProcessor.AudioFormat(sampleRate, channels, outEnc)
+        val outC = if (outEnc == NativeDsp.ENC_16) C.ENCODING_PCM_16BIT else C.ENCODING_PCM_FLOAT
+        return AudioProcessor.AudioFormat(sampleRate, channels, outC)
     }
 
     override fun onFlush() {
-        java.util.Arrays.fill(state, 0.0)
+        dsp.reset()
     }
 
     override fun onReset() {
-        stageCount = 0
-        coefs = DoubleArray(0)
-        state = DoubleArray(0)
         appliedVersion = -1
+        scratchIn = null
+        info = DspInfo()
+    }
+
+    private fun encName(e: Int) = when (e) {
+        NativeDsp.ENC_16 -> "PCM 16 bit"
+        NativeDsp.ENC_24 -> "PCM 24 bit"
+        NativeDsp.ENC_32 -> "PCM 32 bit"
+        else -> "PCM float 32 bit"
     }
 
     private fun refreshIfNeeded() {
         val v = configVersion
-        if (v == appliedVersion && stageCount > 0) return
+        if (v == appliedVersion) return
         val cfg = pending
-        val list = EqMath.stages(cfg, sampleRate.toDouble())
+        val fs = sampleRate.toDouble()
+        val list = EqMath.stages(cfg, fs)
         val flat = DoubleArray(list.size * 5)
         for ((i, c) in list.withIndex()) {
             flat[i * 5] = c.b0
@@ -80,34 +121,44 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
             flat[i * 5 + 3] = c.a1
             flat[i * 5 + 4] = c.a2
         }
-        if (list.size != stageCount || state.size != channels * list.size * 2) {
-            state = DoubleArray(channels * list.size * 2)
-        }
-        coefs = flat
+        val preDbEff = cfg.effectivePreampDb(fs)
+        val preGain = 10.0.pow(preDbEff / 20.0)
         stageCount = list.size
-        preGain = if (cfg.enabled) 10.0.pow(cfg.preampDb / 20.0) else 1.0
-        bypass = kotlin.math.abs(preGain - 1.0) < 1e-6 && list.all { it === EqMath.IDENTITY }
+        dsp.setFilters(flat, list.size, preGain)
+
+        val active = cfg.dspActive()
+        bypass = !active
+        limiterOn = cfg.limiterOn && active
+        dsp.setLimiter(limiterOn, LIMITER_THRESHOLD_DB, LIMITER_RELEASE_MS, LIMITER_LOOKAHEAD_MS)
+        preDb = preDbEff.toFloat()
         appliedVersion = v
+        info = DspInfo(
+            active = active, sampleRate = sampleRate, channels = channels,
+            inEncoding = encName(inEnc), outEncoding = encName(outEnc),
+            bypass = bypass, limiter = limiterOn,
+            latencyMs = if (limiterOn) dsp.latencyFrames() * 1000f / sampleRate else 0f,
+            stages = if (active) list.count { it !== EqMath.IDENTITY } else 0,
+            preampDb = preDb,
+        )
+        AppLog.d(
+            "Audio",
+            "DSP: ${if (bypass) "bypass" else "attivo"}, limiter=${limiterOn}, stadi=${info.stages}, " +
+                "preamp=${"%.1f".format(preDb)} dB"
+        )
     }
 
-    private fun filter(x0: Double, channel: Int): Double {
-        var x = x0 * preGain
-        val n = stageCount
-        var s = channel * n * 2
-        var o = 0
-        val co = coefs
-        val st = state
-        for (k in 0 until n) {
-            val z1 = st[s]
-            val z2 = st[s + 1]
-            val y = co[o] * x + z1
-            st[s] = co[o + 1] * x - co[o + 3] * y + z2
-            st[s + 1] = co[o + 2] * x - co[o + 4] * y
-            x = y
-            s += 2
-            o += 5
+    private fun directInput(src: ByteBuffer, bytes: Int): Pair<ByteBuffer, Int> {
+        if (src.isDirect) return src to src.position()
+        var s = scratchIn
+        if (s == null || s.capacity() < bytes) {
+            s = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
+            scratchIn = s
         }
-        return x
+        s.clear()
+        val dup = src.duplicate()
+        dup.limit(dup.position() + bytes)
+        s.put(dup)
+        return s to 0
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -115,68 +166,62 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         if (remaining == 0) return
         refreshIfNeeded()
 
-        val ch = channels
-        val input = inputBuffer.duplicate().order(ByteOrder.nativeOrder())
-        val bytesPerSample = when (encoding) {
+        val bps = when (encoding) {
             C.ENCODING_PCM_16BIT -> 2
             C.ENCODING_PCM_24BIT -> 3
             else -> 4
         }
-        val frames = remaining / (bytesPerSample * ch)
-        val samples = frames * ch
-
-        val tap = analyzer.enabled
-        var fl = 0f
-        var fr = 0f
-
-        if (encoding == C.ENCODING_PCM_16BIT) {
-            val out = replaceOutputBuffer(samples * 2)
-            for (f in 0 until frames) {
-                for (c in 0 until ch) {
-                    val raw = input.getShort()
-                    if (bypass) {
-                        out.putShort(raw)
-                        if (tap) {
-                            val v = raw / 32768f
-                            if (c == 0) fl = v else if (c == 1) fr = v
-                        }
-                    } else {
-                        val x = raw.toInt() / 32768.0
-                        val y = filter(x, c).coerceIn(-1.0, 1.0)
-                        out.putShort((y * 32767.0).roundToInt().toShort())
-                        if (tap) {
-                            if (c == 0) fl = y.toFloat() else if (c == 1) fr = y.toFloat()
-                        }
-                    }
-                }
-                if (tap) analyzer.push(fl, if (ch > 1) fr else fl)
-            }
-            out.flip()
-        } else {
-            val out = replaceOutputBuffer(samples * 4)
-            for (f in 0 until frames) {
-                for (c in 0 until ch) {
-                    val x: Double = when (encoding) {
-                        C.ENCODING_PCM_FLOAT -> input.getFloat().toDouble()
-                        C.ENCODING_PCM_24BIT -> {
-                            val b0 = input.get().toInt() and 0xFF
-                            val b1 = input.get().toInt() and 0xFF
-                            val b2 = input.get().toInt()
-                            ((b2 shl 16) or (b1 shl 8) or b0) / 8388608.0
-                        }
-                        else -> input.getInt() / 2147483648.0
-                    }
-                    val y = if (bypass) x else filter(x, c)
-                    val yf = y.coerceIn(-1.0, 1.0).toFloat()
-                    out.putFloat(yf)
-                    if (tap) {
-                        if (c == 0) fl = yf else if (c == 1) fr = yf
-                    }
-                }
-                if (tap) analyzer.push(fl, if (ch > 1) fr else fl)
-            }
-            out.flip()
+        val frames = remaining / (bps * channels)
+        if (frames == 0) {
+            inputBuffer.position(inputBuffer.limit())
+            return
         }
-        inputBuffer.position(inputBuffer.limit())
+        val inBytes = frames * bps * channels
+        val outBytes = frames * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4)
+        val (src, off) = directInput(inputBuffer, inBytes)
+        val out = replaceOutputBuffer(outBytes)
+        dsp.process(src, off, inEnc, frames, out, outEnc, bypass)
+        out.position(outBytes)
+        out.flip()
+
+        if (analyzer.enabled) tap(out, frames)
+
+        inputBuffer.position(inputBuffer.position() + inBytes)
+    }
+
+    private fun tap(out: ByteBuffer, frames: Int) {
+        val b = out.duplicate().order(ByteOrder.nativeOrder())
+        val ch = channels
+        val is16 = outEnc == NativeDsp.ENC_16
+        for (f in 0 until frames) {
+            val base = f * ch
+            val l: Float
+            val r: Float
+            if (is16) {
+                l = b.getShort((base) * 2) / 32768f
+                r = if (ch > 1) b.getShort((base + 1) * 2) / 32768f else l
+            } else {
+                l = b.getFloat((base) * 4)
+                r = if (ch > 1) b.getFloat((base + 1) * 4) else l
+            }
+            analyzer.push(l, r)
+        }
+    }
+
+    override fun onQueueEndOfStream() {
+        if (!limiterOn) return
+        val frames = dsp.latencyFrames()
+        if (frames <= 0) return
+        val outBytes = frames * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4)
+        val out = replaceOutputBuffer(outBytes)
+        val n = dsp.flush(out, outEnc, frames)
+        out.position(n * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4))
+        out.flip()
+    }
+
+    companion object {
+        const val LIMITER_THRESHOLD_DB = -0.5f
+        const val LIMITER_RELEASE_MS = 80f
+        const val LIMITER_LOOKAHEAD_MS = 5f
     }
 }

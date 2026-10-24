@@ -6,6 +6,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.marco.mlpod.audio.EqConfig
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
@@ -49,6 +51,9 @@ class StringPref(private val sp: SharedPreferences, private val key: String, def
         sp.edit().putString(key, value).apply()
     }
 }
+
+/** Preset dell'equalizzatore salvato dall'utente (configurazione completa). */
+data class UserPreset(val name: String, val config: EqConfig)
 
 class Settings(context: Context) {
     private val sp: SharedPreferences =
@@ -117,5 +122,37 @@ class Settings(context: Context) {
 
     fun updateEq(block: (EqConfig) -> EqConfig) {
         eq = block(eqState)
+    }
+
+    // Preset utente
+    private var presetsRaw by StringPref(sp, "eq_user_presets", "[]")
+
+    val userPresets: List<UserPreset>
+        get() = try {
+            val a = JSONArray(presetsRaw)
+            List(a.length()) { i ->
+                val o = a.getJSONObject(i)
+                UserPreset(o.getString("name"), EqConfig.fromJson(o.getString("cfg")))
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+    /** Salva (o sostituisce, se il nome esiste già) un preset con la configurazione attuale. */
+    fun saveUserPreset(name: String, cfg: EqConfig) {
+        val n = name.trim().take(24)
+        if (n.isEmpty()) return
+        val list = userPresets.filter { !it.name.equals(n, ignoreCase = true) } + UserPreset(n, cfg.copy(enabled = true))
+        writePresets(list)
+    }
+
+    fun deleteUserPreset(name: String) {
+        writePresets(userPresets.filter { it.name != name })
+    }
+
+    private fun writePresets(list: List<UserPreset>) {
+        val a = JSONArray()
+        for (p in list) a.put(JSONObject().put("name", p.name).put("cfg", p.config.toJson()))
+        presetsRaw = a.toString()
     }
 }

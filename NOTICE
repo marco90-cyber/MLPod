@@ -1,0 +1,9 @@
+MLPod - avvisi di terze parti
+
+Tryptify (https://github.com/tryptz/Tryptify) - GPL-3.0
+  L'algoritmo del limiter look-ahead in app/src/main/cpp/mlpod_dsp.h (massimo mobile con deque
+  monotona, ritardo look-ahead, rilascio esponenziale) si ispira a LimiterProcessor
+  (app/src/main/cpp/dsp/snapins/limiter.h). Il codice e' stato riscritto e modificato:
+  canali multipli, contatori a 64 bit, garanzia di soglia.
+
+Audio EQ Cookbook, Robert Bristow-Johnson - formule dei filtri biquad (nessun codice incluso).
