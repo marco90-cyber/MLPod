@@ -21,14 +21,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 
 @Composable
 fun IpodApp(env: AppEnv) {
@@ -41,6 +44,16 @@ fun IpodApp(env: AppEnv) {
 private fun IpodContent(env: AppEnv) {
     val activity = LocalContext.current as? Activity
     val style = BodyStyles.byId(env.settings.bodyColorId)
+
+    val lightBody = style.top.luminance() > 0.5f
+    SideEffect {
+        val w = activity?.window
+        if (w != null) {
+            val controller = WindowCompat.getInsetsController(w, w.decorView)
+            controller.isAppearanceLightStatusBars = lightBody
+            controller.isAppearanceLightNavigationBars = lightBody
+        }
+    }
 
     LaunchedEffect(env.settings.keepScreenOn) {
         val w = activity?.window ?: return@LaunchedEffect
@@ -60,24 +73,18 @@ private fun IpodContent(env: AppEnv) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .safeDrawingPadding()
+            .background(Brush.verticalGradient(listOf(style.top, style.bottom)))
     ) {
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                .padding(10.dp),
+                .safeDrawingPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
             contentAlignment = Alignment.Center
         ) {
-            val wheelSize = minOf(maxWidth - 60.dp, maxHeight * 0.40f).coerceAtLeast(200.dp)
-            val shape = RoundedCornerShape(32.dp)
+            val wheelSize = minOf(maxWidth - 24.dp, maxHeight * 0.40f).coerceAtLeast(200.dp)
             Column(
-                Modifier
-                    .fillMaxSize()
-                    .shadow(10.dp, shape)
-                    .clip(shape)
-                    .background(Brush.verticalGradient(listOf(style.top, style.bottom)))
-                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 22.dp),
+                Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Schermo LCD con cornice nera
@@ -85,14 +92,15 @@ private fun IpodContent(env: AppEnv) {
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .shadow(6.dp, RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFF0A0A0C))
                         .padding(4.dp)
                 ) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(10.dp))
                     ) {
                         Lcd(env)
                     }

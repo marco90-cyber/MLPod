@@ -55,9 +55,86 @@ fun AppEnv.musicScreen(): MenuScreen = MenuScreen("Musica", split = true) {
                 nav.push(songsScreen("Brani", library.tracks))
             },
             MenuItem("Generi", value = "${library.genres.size}", chevron = true) { nav.push(genresScreen()) },
+            MenuItem("Cartelle", value = "${settings.folders.size}", chevron = true) { openFolders() },
         )
     }
 }
+
+// ---------------------------------------------------------------- cartelle
+
+private fun Track.folderPath(): String = try {
+    DocumentsContract.getDocumentId(Uri.parse(uri)).substringBeforeLast('/', "")
+} catch (_: Throwable) {
+    ""
+}
+
+private fun treeId(uri: String): String = DocumentsContract.getTreeDocumentId(Uri.parse(uri))
+
+/** Apre la navigazione per cartelle (se c'è una sola cartella scelta entra direttamente). */
+fun AppEnv.openFolders() {
+    val roots = settings.folders
+    when {
+        roots.isEmpty() -> nav.push(libraryScreen())
+        roots.size == 1 -> nav.push(folderBrowseScreen(treeId(roots[0]), folderName(roots[0])))
+        else -> nav.push(foldersRootScreen())
+    }
+}
+
+fun AppEnv.foldersRootScreen(): MenuScreen = MenuScreen("Cartelle", split = true) {
+    settings.folders.map { f ->
+        MenuItem(folderName(f), chevron = true) { nav.push(folderBrowseScreen(treeId(f), folderName(f))) }
+    }
+}
+
+fun AppEnv.folderBrowseScreen(path: String, title: String): MenuScreen =
+    MenuScreen(title, cache = true, split = true) {
+        val prefix = if (path.endsWith(":")) path else "$path/"
+        val ordered = library.tracks
+            .filter { val f = it.folderPath(); f == path || f.startsWith(prefix) }
+            .sortedWith(compareBy<Track>({ it.folderPath() }, { it.discNo }, { it.trackNo }, { it.title.lowercase() }))
+        val direct = ordered.filter { it.folderPath() == path }
+        val subs = ordered.map { it.folderPath() }
+            .filter { it != path }
+            .map { it.removePrefix(prefix).substringBefore('/') }
+            .distinct()
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
+
+        val items = ArrayList<MenuItem>()
+        if (ordered.isEmpty()) {
+            items.add(MenuItem("Nessun brano in questa cartella", dimmed = true))
+        } else {
+            items.add(
+                MenuItem(
+                    "Riproduci cartella", value = "${ordered.size}",
+                    albumKey = ordered.first().albumKey,
+                    previewTitle = title, previewSub = "${ordered.size} brani",
+                ) { playFrom(ordered, 0) }
+            )
+            items.add(
+                MenuItem(
+                    "Mescola cartella",
+                    albumKey = ordered.first().albumKey,
+                    previewTitle = title, previewSub = "${ordered.size} brani",
+                ) {
+                    engine.playQueue(ordered, ordered.indices.random(), shuffle = true)
+                    openNowPlaying()
+                }
+            )
+        }
+        for (sub in subs) {
+            val subPath = prefix + sub
+            val inSub = ordered.filter { val f = it.folderPath(); f == subPath || f.startsWith("$subPath/") }
+            items.add(
+                MenuItem(
+                    sub, value = "${inSub.size}", chevron = true,
+                    albumKey = inSub.firstOrNull()?.albumKey,
+                    previewTitle = sub, previewSub = "${inSub.size} brani",
+                ) { nav.push(folderBrowseScreen(subPath, sub)) }
+            )
+        }
+        direct.forEachIndexed { i, t -> items.add(MenuItem(t.title, track = t) { playFrom(direct, i) }) }
+        items
+    }
 
 fun AppEnv.artistsScreen(): MenuScreen = MenuScreen("Artisti", cache = true, split = true) {
     library.artists.map { a ->
