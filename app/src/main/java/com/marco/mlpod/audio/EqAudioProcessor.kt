@@ -132,7 +132,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         val active = cfg.dspActive()
         bypass = !active
         limiterOn = cfg.limiterOn && active
-        dsp.setLimiter(limiterOn, LIMITER_THRESHOLD_DB, LIMITER_RELEASE_MS, LIMITER_LOOKAHEAD_MS)
+        dsp.setLimiter(limiterOn, cfg.limiterThresholdDb, cfg.limiterReleaseMs, LIMITER_LOOKAHEAD_MS)
         preDb = preDbEff.toFloat()
         appliedVersion = v
         info = DspInfo(
@@ -227,8 +227,6 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     }
 
     companion object {
-        const val LIMITER_THRESHOLD_DB = -0.5f
-        const val LIMITER_RELEASE_MS = 80f
         const val LIMITER_LOOKAHEAD_MS = 5f
     }
 }

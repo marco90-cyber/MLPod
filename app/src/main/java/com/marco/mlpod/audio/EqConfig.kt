@@ -33,6 +33,10 @@ data class EqConfig(
     val trebleFreq: Float = 10000f,
     val limiterOn: Boolean = true,
     val autoHeadroom: Boolean = false,
+    /** Soglia del limiter in dBFS (-12..0). */
+    val limiterThresholdDb: Float = -0.5f,
+    /** Rilascio del limiter in ms (20..500). */
+    val limiterReleaseMs: Float = 80f,
 ) {
     /** Cambia il numero di bande ricampionando la curva attuale. */
     fun withBandCount(n: Int): EqConfig {
@@ -120,6 +124,8 @@ data class EqConfig(
         o.put("toneV", 2)
         o.put("limiter", limiterOn)
         o.put("autoHeadroom", autoHeadroom)
+        o.put("limThr", limiterThresholdDb.toDouble())
+        o.put("limRel", limiterReleaseMs.toDouble())
         o.put("preamp", preampDb.toDouble())
         o.put("bass", bassPercent)
         o.put("bassFreq", bassFreq.toDouble())
@@ -154,6 +160,14 @@ data class EqConfig(
             3 -> listOf(100f, 1000f, 10000f)
             4 -> listOf(60f, 400f, 2500f, 10000f)
             5 -> listOf(60f, 230f, 910f, 3600f, 14000f)
+            // 15 bande: terzi d'ottava ISO a passo 2/3 d'ottava
+            15 -> listOf(25f, 40f, 63f, 100f, 160f, 250f, 400f, 630f, 1000f, 1600f, 2500f, 4000f, 6300f, 10000f, 16000f)
+            // 31 bande: terzi d'ottava ISO, da 20 Hz a 20 kHz
+            31 -> listOf(
+                20f, 25f, 31.5f, 40f, 50f, 63f, 80f, 100f, 125f, 160f, 200f, 250f, 315f, 400f, 500f, 630f,
+                800f, 1000f, 1250f, 1600f, 2000f, 2500f, 3150f, 4000f, 5000f, 6300f, 8000f, 10000f,
+                12500f, 16000f, 20000f
+            )
             10 -> listOf(31f, 62f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
             else -> {
                 val lo = 32.0
@@ -221,6 +235,8 @@ data class EqConfig(
                     trebleFreq = o.optDouble("trebleFreq", 10000.0).toFloat(),
                     limiterOn = o.optBoolean("limiter", true),
                     autoHeadroom = o.optBoolean("autoHeadroom", false),
+                    limiterThresholdDb = o.optDouble("limThr", -0.5).toFloat().coerceIn(-12f, 0f),
+                    limiterReleaseMs = o.optDouble("limRel", 80.0).toFloat().coerceIn(20f, 500f),
                 )
             } catch (_: Exception) {
                 EqConfig()

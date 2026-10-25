@@ -43,6 +43,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.marco.mlpod.audio.DspInfo
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -94,10 +107,16 @@ private fun fmtFreqLong(f: Float): String =
 fun EqualizerScreen(env: AppEnv) {
     val settings = env.settings
     val eq = settings.eq
+    val info = env.engine.eqProcessor.info
+    var mode by remember { mutableIntStateOf(0) } // 0 = Eq., 1 = Tono, 2 = Limite
     var target by remember { mutableStateOf<FreqTarget?>(null) }
+    var presetsDialog by remember { mutableStateOf(false) }
     var saveDialog by remember { mutableStateOf(false) }
     var saveName by remember { mutableStateOf("") }
     var deletePreset by remember { mutableStateOf<String?>(null) }
+    var moreMenu by remember { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    var viewW by remember { mutableIntStateOf(0) }
 
     Column(
         Modifier
@@ -132,171 +151,125 @@ fun EqualizerScreen(env: AppEnv) {
             Spacer(Modifier.width(4.dp))
         }
 
-        // numero di bande (menu a tendina)
-        var bandsMenu by remember { mutableStateOf(false) }
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Bande", color = Color(0xFF9AA0AA), fontSize = 13.sp, modifier = Modifier.padding(end = 8.dp))
-            Box {
+        // preamp fisso + bande scorrevoli
+        Row(Modifier.fillMaxWidth().weight(1f)) {
+            Column(
+                Modifier
+                    .width(54.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(PanelColor)
+                    .padding(vertical = 6.dp)
+            ) {
+                BandColumn(
+                    label = "Preamp", value = eq.preampDb, color = Color(0xFFB0B4BE),
+                    modifier = Modifier.fillMaxSize(),
+                    onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
+                    onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
+                    onLabelClick = null,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            BoxWithConstraints(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(PanelColor)
+                    .onSizeChanged { viewW = it.width }
+            ) {
+                val colW = maxOf(40.dp, maxWidth / minOf(eq.bandCount, 9))
                 Row(
                     Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(ChipColor)
-                        .clickable { env.feedback.tapScreen(); bandsMenu = true }
-                        .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxHeight()
+                        .horizontalScroll(scroll)
+                        .padding(vertical = 6.dp),
                 ) {
-                    Text("${eq.bandCount} bande", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Icon(Icons.Filled.ArrowDropDown, null, tint = Color.White)
-                }
-                DropdownMenu(
-                    expanded = bandsMenu,
-                    onDismissRequest = { bandsMenu = false },
-                    modifier = Modifier.background(PanelColor)
-                ) {
-                    for (n in EqConfig.MIN_BANDS..EqConfig.MAX_BANDS) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "$n bande",
-                                    color = if (n == eq.bandCount) Accent else Color.White,
-                                    fontWeight = if (n == eq.bandCount) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            onClick = {
-                                env.feedback.tapScreen()
-                                settings.updateEq { it.withBandCount(n) }
-                                bandsMenu = false
-                            }
+                    for (i in 0 until eq.bandCount) {
+                        BandColumn(
+                            label = fmtFreqShort(eq.freqs[i]).uppercase(), value = eq.gains[i], color = NeonGreen,
+                            modifier = Modifier.width(colW),
+                            onChange = { v -> settings.updateEq { it.withGain(i, v) } },
+                            onReset = { settings.updateEq { it.withGain(i, 0f) } },
+                            onLabelClick = { target = FreqTarget.Band(i) },
                         )
                     }
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-
-        // curva di risposta
-        ResponseGraph(eq, Modifier.fillMaxWidth().height(74.dp))
         Spacer(Modifier.height(6.dp))
 
-        // cursori (scorrono in orizzontale quando le bande sono tante)
-        BoxWithConstraints(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(16.dp))
-                .background(PanelColor)
-        ) {
-            val cols = eq.bandCount + 1
-            val colW = maxOf(36.dp, (maxWidth - 4.dp) / cols)
-            Row(
-                Modifier
-                    .fillMaxHeight()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(vertical = 8.dp, horizontal = 2.dp),
+        // curva di risposta con finestra di scorrimento
+        ResponseGraph(
+            eq = eq, scroll = scroll, viewW = viewW,
+            modifier = Modifier.fillMaxWidth().height(58.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+
+        // stato reale dell'uscita DSP
+        Text(
+            text = dspLine(info),
+            color = Color(0xFF8E96A8), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center, maxLines = 1,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(6.dp))
+
+        // comandi: modalità a sinistra, contenuto a destra
+        Row(Modifier.fillMaxWidth().height(184.dp)) {
+            Column(
+                Modifier.width(78.dp).fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                BandColumn(
-                    label = "Pre", value = eq.preampDb, freqText = "dB",
-                    color = Color(0xFFB0B4BE), modifier = Modifier.width(colW),
-                    onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
-                    onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
-                    onFreqClick = null,
-                )
-                for (i in 0 until eq.bandCount) {
-                    val hue = if (eq.bandCount > 1) 350f * i / (eq.bandCount - 1) else 0f
-                    BandColumn(
-                        label = fmtFreqShort(eq.freqs[i]), value = eq.gains[i],
-                        freqText = "Q " + String.format(Locale.ITALY, "%.1f", eq.qFor(i)),
-                        color = Color.hsv((hue + 355f) % 360f, 0.85f, 1f), modifier = Modifier.width(colW),
-                        onChange = { v -> settings.updateEq { it.withGain(i, v) } },
-                        onReset = { settings.updateEq { it.withGain(i, 0f) } },
-                        onFreqClick = { target = FreqTarget.Band(i) },
-                    )
+                ModeButton("Eq.", mode == 0) { env.feedback.tapScreen(); mode = 0 }
+                ModeButton("Tono", mode == 1) { env.feedback.tapScreen(); mode = 1 }
+                ModeButton("Limite", mode == 2) { env.feedback.tapScreen(); mode = 2 }
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(50))
+                            .border(1.dp, Color(0xFF5A5E68), RoundedCornerShape(50))
+                            .clickable { env.feedback.tapScreen(); presetsDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Preimpostazioni", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Box {
+                        Box(
+                            Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(50))
+                                .border(1.dp, Color(0xFF5A5E68), RoundedCornerShape(50))
+                                .clickable { env.feedback.tapScreen(); moreMenu = true },
+                            contentAlignment = Alignment.Center
+                        ) { Icon(Icons.Filled.MoreVert, "Altro", tint = Color.White) }
+                        DropdownMenu(
+                            expanded = moreMenu, onDismissRequest = { moreMenu = false },
+                            modifier = Modifier.background(PanelColor)
+                        ) {
+                            MenuRow("Azzera curva") {
+                                settings.updateEq { c -> c.copy(gains = List(c.bandCount) { 0f }, preampDb = 0f) }
+                                moreMenu = false
+                            }
+                            MenuRow("Q automatico") { settings.updateEq { it.withAutoQ() }; moreMenu = false }
+                            MenuRow("Salva come preimpostazione") { saveName = ""; saveDialog = true; moreMenu = false }
+                            MenuRow("Uscita audio") { env.overlay = Overlay.Output; moreMenu = false }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                when (mode) {
+                    0 -> BandsPanel(env, eq)
+                    1 -> TonePanel(env, eq) { target = it }
+                    else -> LimiterPanel(env, eq)
                 }
             }
-        }
-        Spacer(Modifier.height(6.dp))
-
-        // limiter, headroom, Q, uscita
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Chip("Limiter", selected = eq.limiterOn) {
-                env.feedback.tapScreen()
-                settings.updateEq { it.copy(limiterOn = !it.limiterOn) }
-            }
-            Chip("Auto-headroom", selected = eq.autoHeadroom) {
-                env.feedback.tapScreen()
-                settings.updateEq { it.copy(autoHeadroom = !it.autoHeadroom) }
-            }
-            Chip("Q auto", selected = false) {
-                env.feedback.tapScreen()
-                settings.updateEq { it.withAutoQ() }
-            }
-            Chip("Uscita audio", selected = false) {
-                env.feedback.tapScreen()
-                env.overlay = Overlay.Output
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-
-        // preset
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Preset", color = Color(0xFF9AA0AA), fontSize = 13.sp, modifier = Modifier.padding(end = 4.dp))
-            Chip("+ Salva", selected = false) {
-                env.feedback.tapScreen()
-                saveName = ""
-                saveDialog = true
-            }
-            for (up in settings.userPresets) {
-                Chip(up.name, selected = false, accent = true, onLongClick = { deletePreset = up.name }) {
-                    env.feedback.tapScreen()
-                    settings.eq = up.config.copy(enabled = true)
-                }
-            }
-            for (p in EqPresets.all) {
-                Chip(p.name, selected = false) {
-                    env.feedback.tapScreen()
-                    settings.updateEq { it.withCurve(p.points).copy(enabled = true) }
-                }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-
-        // manopole Bassi / Alti
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(PanelColor)
-                .padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            ToneKnob(
-                title = "Bassi", percent = eq.bassPercent, freq = eq.bassFreq, color = BassColor,
-                onTick = { env.feedback.tapScreen() },
-                onChange = { v -> settings.updateEq { it.copy(bassPercent = v) } },
-                onFreqClick = { target = FreqTarget.Bass },
-            )
-            ToneKnob(
-                title = "Alti", percent = eq.treblePercent, freq = eq.trebleFreq, color = Accent,
-                onTick = { env.feedback.tapScreen() },
-                onChange = { v -> settings.updateEq { it.copy(treblePercent = v) } },
-                onFreqClick = { target = FreqTarget.Treble },
-            )
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -305,13 +278,48 @@ fun EqualizerScreen(env: AppEnv) {
         FreqDialog(target = t, eq = eq, onDismiss = { target = null }) { newEq -> settings.eq = newEq }
     }
 
+    if (presetsDialog) {
+        AlertDialog(
+            onDismissRequest = { presetsDialog = false },
+            containerColor = Color(0xFF1E1F24),
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = { Text("Preimpostazioni") },
+            text = {
+                Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
+                    PresetRow("+ Salva la configurazione attuale", accent = true) {
+                        presetsDialog = false; saveName = ""; saveDialog = true
+                    }
+                    val mine = settings.userPresets
+                    if (mine.isNotEmpty()) {
+                        Text("Le mie", color = Color(0xFF9AA0AA), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                        for (up in mine) {
+                            PresetRow(up.name, onDelete = { deletePreset = up.name }) {
+                                settings.eq = up.config.copy(enabled = true)
+                                presetsDialog = false
+                            }
+                        }
+                    }
+                    Text("Di fabbrica", color = Color(0xFF9AA0AA), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    for (p in EqPresets.all) {
+                        PresetRow(p.name) {
+                            settings.updateEq { it.withCurve(p.points).copy(enabled = true) }
+                            presetsDialog = false
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { presetsDialog = false }) { Text("Chiudi") } }
+        )
+    }
+
     if (saveDialog) {
         AlertDialog(
             onDismissRequest = { saveDialog = false },
             containerColor = Color(0xFF1E1F24),
             titleContentColor = Color.White,
             textContentColor = Color.White,
-            title = { Text("Salva preset") },
+            title = { Text("Salva preimpostazione") },
             text = {
                 OutlinedTextField(
                     value = saveName,
@@ -342,13 +350,200 @@ fun EqualizerScreen(env: AppEnv) {
             containerColor = Color(0xFF1E1F24),
             titleContentColor = Color.White,
             textContentColor = Color.White,
-            title = { Text("Elimina preset") },
+            title = { Text("Elimina preimpostazione") },
             text = { Text("Vuoi eliminare \"$name\"?") },
             confirmButton = {
                 TextButton(onClick = { settings.deleteUserPreset(name); deletePreset = null }) { Text("Elimina") }
             },
             dismissButton = { TextButton(onClick = { deletePreset = null }) { Text("Annulla") } }
         )
+    }
+}
+
+private val NeonGreen = Color(0xFF00E676)
+
+/** Riga di stato: solo valori realmente in uso dal motore DSP. */
+private fun dspLine(i: DspInfo): String {
+    if (i.sampleRate <= 0) return "DSP IN ATTESA DI UN BRANO"
+    val fmt = i.outEncoding.removePrefix("PCM ").uppercase()
+    val hz = if (i.sampleRate % 1000 == 0) "${i.sampleRate / 1000} KHZ" else String.format(Locale.ITALY, "%.1f KHZ", i.sampleRate / 1000.0)
+    val state = when {
+        i.bypass -> "BYPASS"
+        i.limiter -> "DSP + LIMITE"
+        else -> "DSP"
+    }
+    return "$state · USCITA $fmt · $hz"
+}
+
+@Composable
+private fun ModeButton(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) Color(0xFF3A3D45) else ChipColor)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun MenuRow(text: String, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(text, color = Color.White) }, onClick = onClick)
+}
+
+@Composable
+private fun PresetRow(text: String, accent: Boolean = false, onDelete: (() -> Unit)? = null, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text, color = if (accent) Accent else Color.White, fontSize = 16.sp,
+            fontWeight = if (accent) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f)
+        )
+        if (onDelete != null) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Delete, "Elimina", tint = Color(0xFF9AA0AA))
+            }
+        }
+    }
+}
+
+/** Modalità "Eq.": numero di bande e scorciatoie. */
+@Composable
+private fun BandsPanel(env: AppEnv, eq: EqConfig) {
+    val settings = env.settings
+    var menu by remember { mutableStateOf(false) }
+    val options = (listOf(5, 10, 15, 31) + eq.bandCount).distinct().sorted()
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(12.dp)) {
+        Text("Numero di bande", color = Color(0xFF9AA0AA), fontSize = 13.sp)
+        Spacer(Modifier.height(6.dp))
+        Box {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(ChipColor)
+                    .clickable { env.feedback.tapScreen(); menu = true }
+                    .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("${eq.bandCount} bande", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Filled.ArrowDropDown, null, tint = Color.White)
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.background(PanelColor)) {
+                for (n in options) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "$n bande",
+                                color = if (n == eq.bandCount) Accent else Color.White,
+                                fontWeight = if (n == eq.bandCount) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        onClick = {
+                            env.feedback.tapScreen()
+                            settings.updateEq { it.withBandCount(n) }
+                            menu = false
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Tocca la frequenza sotto uno slider per cambiare frequenza e Q. Doppio tocco sullo slider: azzera la banda.",
+            color = Color(0xFF7C828C), fontSize = 12.sp
+        )
+    }
+}
+
+/** Modalità "Tono": manopole Bassi / Alti. */
+@Composable
+private fun TonePanel(env: AppEnv, eq: EqConfig, onFreq: (FreqTarget) -> Unit) {
+    val settings = env.settings
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ToneKnob(
+            title = "Bassi", percent = eq.bassPercent, freq = eq.bassFreq, color = BassColor,
+            onTick = { env.feedback.tapScreen() },
+            onChange = { v -> settings.updateEq { it.copy(bassPercent = v) } },
+            onFreqClick = { onFreq(FreqTarget.Bass) },
+        )
+        ToneKnob(
+            title = "Alti", percent = eq.treblePercent, freq = eq.trebleFreq, color = Accent,
+            onTick = { env.feedback.tapScreen() },
+            onChange = { v -> settings.updateEq { it.copy(treblePercent = v) } },
+            onFreqClick = { onFreq(FreqTarget.Treble) },
+        )
+    }
+}
+
+/** Modalità "Limite": limiter, soglia, rilascio e auto-headroom. */
+@Composable
+private fun LimiterPanel(env: AppEnv, eq: EqConfig) {
+    val settings = env.settings
+    val red by produceState(0f) {
+        while (true) {
+            value = env.engine.eqProcessor.limiterReductionDb(true)
+            delay(500)
+        }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(PanelColor)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Limiter", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(
+                if (!eq.limiterOn) "spento" else if (red > -0.05f) "nessuna riduzione" else String.format(Locale.ITALY, "%.1f dB", red),
+                color = Color(0xFF9AA0AA), fontSize = 12.sp
+            )
+            Spacer(Modifier.width(8.dp))
+            Switch(
+                checked = eq.limiterOn,
+                onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { c -> c.copy(limiterOn = on) } }
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Soglia ${String.format(Locale.ITALY, "%.1f", eq.limiterThresholdDb)} dB", color = Color(0xFFDDE1EA), fontSize = 12.sp, modifier = Modifier.width(96.dp))
+            Slider(
+                value = eq.limiterThresholdDb, valueRange = -12f..0f,
+                onValueChange = { v -> settings.updateEq { it.copy(limiterThresholdDb = (v * 2).roundToInt() / 2f) } },
+                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                modifier = Modifier.height(28.dp)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Rilascio ${eq.limiterReleaseMs.roundToInt()} ms", color = Color(0xFFDDE1EA), fontSize = 12.sp, modifier = Modifier.width(96.dp))
+            Slider(
+                value = eq.limiterReleaseMs, valueRange = 20f..500f,
+                onValueChange = { v -> settings.updateEq { it.copy(limiterReleaseMs = (v / 10f).roundToInt() * 10f) } },
+                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                modifier = Modifier.height(28.dp)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Auto-headroom", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Switch(
+                checked = eq.autoHeadroom,
+                onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { it.copy(autoHeadroom = on) } }
+            )
+        }
     }
 }
 
@@ -417,41 +612,32 @@ private fun ToneKnob(
 private fun BandColumn(
     label: String,
     value: Float,
-    freqText: String,
     color: Color,
     modifier: Modifier,
     onChange: (Float) -> Unit,
     onReset: () -> Unit,
-    onFreqClick: (() -> Unit)?,
+    onLabelClick: (() -> Unit)?,
 ) {
-    Column(modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         VerticalGainSlider(
             value = value, range = EqConfig.GAIN_RANGE, color = color,
             onChange = onChange, onReset = onReset,
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
-        Text(
-            fmtDb(value), color = Color(0xFFDDE1EA), fontSize = 10.sp, maxLines = 1,
-            textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp)
-        )
-        val labelMod = if (onFreqClick != null) {
-            Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(ChipColor)
-                .clickable(onClick = onFreqClick)
-                .padding(horizontal = 3.dp, vertical = 3.dp)
+        val labelMod = if (onLabelClick != null) {
+            Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onLabelClick).padding(horizontal = 3.dp, vertical = 3.dp)
         } else Modifier.padding(horizontal = 3.dp, vertical = 3.dp)
-        Box(Modifier.padding(top = 2.dp)) {
-            Text(
-                label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                maxLines = 1, textAlign = TextAlign.Center, modifier = labelMod
-            )
-        }
-        Text(freqText, color = Color(0xFF7C828C), fontSize = 9.sp)
+        Text(
+            label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            maxLines = 1, textAlign = TextAlign.Center, modifier = labelMod
+        )
+        Text(
+            String.format(Locale.ITALY, "%.1f", value), color = Color(0xFF9AA0AA), fontSize = 10.sp,
+            maxLines = 1, textAlign = TextAlign.Center
+        )
     }
 }
 
-/** Cursore verticale in stile Poweramp: linea neon dal centro (0 dB) fino alla maniglia. */
 @Composable
 private fun VerticalGainSlider(
     value: Float,
@@ -528,48 +714,88 @@ private fun VerticalGainSlider(
 }
 
 /** Grafico della curva di risposta complessiva (bande + bassi + alti). */
+/** Posizione 0..1 (asse logaritmico 20 Hz - 20 kHz) di una frequenza. */
+private fun freqPos(f: Float): Float = (ln(f / 20f) / ln(1000f)).coerceIn(0f, 1f)
+
+/** Curva di risposta complessiva con la finestra delle bande visibili; trascinala per scorrere. */
 @Composable
-private fun ResponseGraph(eq: EqConfig, modifier: Modifier = Modifier) {
+private fun ResponseGraph(eq: EqConfig, scroll: ScrollState, viewW: Int, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    val total = (scroll.maxValue + viewW).coerceAtLeast(1)
+    val f0 = scroll.value.toFloat() / total
+    val f1 = (scroll.value + viewW).toFloat() / total
+
+    // indice frazionario di banda -> frequenza (interpolazione logaritmica)
+    fun freqAtIndex(t: Float): Float {
+        val n = eq.freqs.size
+        val x = (t * n - 0.5f).coerceIn(0f, (n - 1).toFloat())
+        val i = x.toInt().coerceAtMost(n - 2).coerceAtLeast(0)
+        if (n < 2) return eq.freqs.firstOrNull() ?: 1000f
+        val fr = x - i
+        return eq.freqs[i] * (eq.freqs[i + 1] / eq.freqs[i]).pow(fr)
+    }
+    fun indexAtFreq(f: Float): Float {
+        val n = eq.freqs.size
+        if (f <= eq.freqs.first()) return 0.5f / n
+        if (f >= eq.freqs.last()) return (n - 0.5f) / n
+        for (i in 0 until n - 1) {
+            if (f <= eq.freqs[i + 1]) {
+                val fr = ln(f / eq.freqs[i]) / ln(eq.freqs[i + 1] / eq.freqs[i])
+                return (i + fr + 0.5f) / n
+            }
+        }
+        return 1f
+    }
+
+    fun scrollToX(x: Float, w: Float) {
+        val f = 20f * 1000f.pow((x / w).coerceIn(0f, 1f))
+        val center = indexAtFreq(f) * total
+        scope.launch { scroll.scrollTo((center - viewW / 2f).roundToInt().coerceIn(0, scroll.maxValue)) }
+    }
+
     Canvas(
         modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(PanelColor)
+            .background(Color(0xFF17181C))
+            .pointerInput(eq.freqs, viewW, scroll.maxValue) {
+                detectTapGestures(onTap = { o -> scrollToX(o.x, this.size.width.toFloat()) })
+            }
+            .pointerInput(eq.freqs, viewW, scroll.maxValue) {
+                detectDragGestures { c, _ ->
+                    c.consume()
+                    scrollToX(c.position.x, this.size.width.toFloat())
+                }
+            }
     ) {
         val w = this.size.width
         val h = this.size.height
         val rangeDb = 15f
-        fun yOf(db: Float): Float = h / 2f - (db.coerceIn(-rangeDb, rangeDb) / rangeDb) * (h / 2f - 6.dp.toPx())
-        // linee guida
-        for (db in listOf(-12f, -6f, 0f, 6f, 12f)) {
-            drawLine(
-                if (db == 0f) Color(0xFF4A4E58) else Color(0xFF26282E),
-                Offset(0f, yOf(db)), Offset(w, yOf(db)), 1.dp.toPx()
+        fun yOf(db: Float): Float = h / 2f - (db.coerceIn(-rangeDb, rangeDb) / rangeDb) * (h / 2f - 4.dp.toPx())
+
+        // finestra delle bande visibili
+        if (eq.freqs.isNotEmpty() && viewW > 0 && scroll.maxValue > 0) {
+            val xa = freqPos(freqAtIndex(f0)) * w
+            val xb = freqPos(freqAtIndex(f1)) * w
+            drawRoundRect(
+                Color(0x33FFFFFF), Offset(xa, 0f), Size((xb - xa).coerceAtLeast(6.dp.toPx()), h),
+                CornerRadius(8.dp.toPx())
             )
         }
+        drawLine(Color(0xFF4A4E58), Offset(0f, yOf(0f)), Offset(w, yOf(0f)), 1.dp.toPx())
+
         val points = 160
-        val fMin = 20.0
-        val fMax = 20000.0
         val path = Path()
         for (i in 0 until points) {
             val t = i / (points - 1.0)
-            val f = fMin * (fMax / fMin).pow(t)
-            val db = eq.responseDb(f).toFloat()
+            val f = 20.0 * 1000.0.pow(t)
             val x = (t * w).toFloat()
-            val y = yOf(db)
+            val y = yOf(eq.responseDb(f).toFloat())
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        drawPath(path, Accent, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round))
-        // marcatori delle bande
-        if (eq.enabled) {
-            for (i in 0 until eq.bandCount) {
-                val t = (ln(eq.freqs[i] / fMin.toFloat()) / ln((fMax / fMin).toFloat())).coerceIn(0f, 1f)
-                drawCircle(Color.White.copy(alpha = 0.7f), 2.5.dp.toPx(), Offset(t * w, yOf(eq.gains[i])))
-            }
-        }
+        drawPath(path, NeonGreen, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
     }
 }
 
-/** Dialogo per scegliere la frequenza di una banda o di Bassi / Alti, con anteprima in tempo reale. */
 @Composable
 private fun FreqDialog(
     target: FreqTarget,

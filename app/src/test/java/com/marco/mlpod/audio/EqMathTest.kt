@@ -129,7 +129,7 @@ class EqMathTest {
     @Test
     fun jsonRoundTripKeepsEverything() {
         val cfg = EqConfig(enabled = true).withBandCount(24).withGain(3, 4.5f).withQ(3, 3.3f)
-            .withFreq(5, 400f).copy(preampDb = -3f, bassPercent = 20, trebleFreq = 8000f, limiterOn = false, autoHeadroom = true)
+            .withFreq(5, 400f).copy(preampDb = -3f, bassPercent = 20, trebleFreq = 8000f, limiterOn = false, autoHeadroom = true, limiterThresholdDb = -3f, limiterReleaseMs = 120f)
         val back = EqConfig.fromJson(cfg.toJson())
         assertEquals(cfg, back)
     }
@@ -150,6 +150,18 @@ class EqMathTest {
     fun invalidJsonFallsBackToDefaults() {
         assertEquals(EqConfig(), EqConfig.fromJson("non è json"))
         assertEquals(EqConfig(), EqConfig.fromJson(null))
+    }
+
+    @Test
+    fun selectableBandSetsUseIsoFrequencies() {
+        for (n in listOf(5, 10, 15, 31)) {
+            val cfg = EqConfig(enabled = true).withBandCount(n)
+            assertEquals(n, cfg.bandCount)
+            assertEquals(n, cfg.freqs.size)
+        }
+        assertEquals(20f, EqConfig.defaultFreqs(31).first(), 0f)
+        assertEquals(20000f, EqConfig.defaultFreqs(31).last(), 0f)
+        assertEquals(1000f, EqConfig.defaultFreqs(31)[17], 0f)
     }
 
     @Test
