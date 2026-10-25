@@ -40,6 +40,7 @@ class AudioEngine(
     val eqProcessor = EqAudioProcessor(analyzer)
 
     val outputMonitor = OutputMonitor(app)
+    val dac = DacController(app)
 
     val player: ExoPlayer
 
@@ -70,6 +71,11 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
+    fun setDacMode(on: Boolean) {
+        settings.dacMode = on
+        dac.enabled = on
+    }
+
     /** Cambia la qualità di uscita (16/24/32 bit); si applica dal prossimo brano. */
     fun setOutputBits(bits: Int) {
         settings.outputBits = bits
@@ -85,6 +91,7 @@ class AudioEngine(
 
     init {
         eqProcessor.outputBits = settings.outputBits
+        dac.enabled = settings.dacMode
         val factory = object : DefaultRenderersFactory(app) {
             override fun buildAudioSink(
                 context: Context,
@@ -96,7 +103,9 @@ class AudioEngine(
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .build()
                 // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.
-                return ProcessingAudioSink(inner, eqProcessor)
+                return ProcessingAudioSink(inner, eqProcessor).also { sink ->
+                    sink.onFormat = { sr, ch, enc -> dac.apply(sr, ch, enc) }
+                }
             }
         }
         player = ExoPlayer.Builder(app, factory)

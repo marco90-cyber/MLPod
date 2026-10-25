@@ -301,6 +301,11 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
             val next = when (settings.outputBits) { 16 -> 24; 24 -> 32; else -> 16 }
             engine.setOutputBits(next)
         },
+        MenuItem(
+            "Modalità DAC USB",
+            value = if (settings.dacMode) "Sì" else "No",
+            sub = "Bit-perfect, Android 14+ · dal prossimo brano"
+        ) { engine.setDacMode(!settings.dacMode) },
         MenuItem("Equalizzatore", chevron = true) { overlay = Overlay.Equalizer },
         MenuItem("Uscita audio", chevron = true) { overlay = Overlay.Output },
     )

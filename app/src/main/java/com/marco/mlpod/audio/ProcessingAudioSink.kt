@@ -24,6 +24,7 @@ class ProcessingAudioSink(
     private val processor: EqAudioProcessor,
 ) : ForwardingAudioSink(sink) {
 
+    var onFormat: ((sampleRate: Int, channels: Int, encoding: Int) -> Unit)? = null
     private var active = false
     private var pending: ByteBuffer? = null
     private var pendingPts = 0L
@@ -48,6 +49,9 @@ class ProcessingAudioSink(
             } catch (e: AudioProcessor.UnhandledAudioFormatException) {
                 AppLog.w("Audio", "DSP: formato non gestito: ${e.message}")
             }
+        }
+        if (MimeTypes.AUDIO_RAW == fmt.sampleMimeType) {
+            onFormat?.invoke(fmt.sampleRate, fmt.channelCount, fmt.pcmEncoding)
         }
         super.configure(fmt, specifiedBufferSize, outputChannels)
     }

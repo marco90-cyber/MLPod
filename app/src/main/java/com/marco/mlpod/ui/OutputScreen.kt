@@ -133,6 +133,7 @@ fun OutputScreen(env: AppEnv) {
                     if (om.exact) "Dispositivo (indicato da Android)" else "Dispositivo (stimato dall'elenco uscite)",
                     om.kind.label + if (om.name.isNotBlank()) " · ${om.name}" else ""
                 )
+                KV("Modalità DAC (bit-perfect)", engine.dac.status)
                 KV("Qualità scelta", "${env.settings.outputBits} bit (dal prossimo brano)")
             }
 

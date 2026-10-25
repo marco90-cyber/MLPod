@@ -100,6 +100,8 @@ class Settings(context: Context) {
     var repeatMode by IntPref(sp, "repeat", 0)
     /** Qualità di uscita: 16, 24 o 32 bit */
     var outputBits by IntPref(sp, "output_bits", 32)
+    /** Modalità DAC bit-perfect (Android 14+) */
+    var dacMode by BoolPref(sp, "dac_mode", false)
     var hiResOutput by BoolPref(sp, "hires_output", true)
     var volume by FloatPref(sp, "volume", 1f)
 

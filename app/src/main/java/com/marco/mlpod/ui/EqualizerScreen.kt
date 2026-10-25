@@ -217,7 +217,7 @@ fun EqualizerScreen(env: AppEnv) {
         Spacer(Modifier.height(6.dp))
 
         // comandi: modalità a sinistra, contenuto a destra
-        Row(Modifier.fillMaxWidth().height(232.dp)) {
+        Row(Modifier.fillMaxWidth().height(272.dp)) {
             Column(
                 Modifier.width(78.dp).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -661,7 +661,7 @@ private fun ToneKnob(
             color = Color(0xFF9AA0AA), fontSize = 14.sp
         )
         Spacer(Modifier.height(6.dp))
-        Knob(value = percent, color = color, size = 88.dp, onTick = onTick, onChange = onChange)
+        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onChange = onChange)
         Spacer(Modifier.height(6.dp))
         Box(
             Modifier
@@ -908,6 +908,7 @@ private fun FreqDialog(
                 Text(fmtFreqLong(current), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Accent)
                 Spacer(Modifier.height(8.dp))
                 NeonSlider(
+                    modifier = Modifier.fillMaxWidth(),
                     value = pos, valueRange = 0f..1f,
                     onValueChange = { p ->
                         val raw = min * (max / min).pow(p)
@@ -942,6 +943,7 @@ private fun FreqDialog(
                         fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Accent
                     )
                     NeonSlider(
+                        modifier = Modifier.fillMaxWidth(),
                         value = qPos, valueRange = 0f..1f,
                         onValueChange = { p ->
                             val v = EqConfig.MIN_Q * (EqConfig.MAX_Q / EqConfig.MIN_Q).pow(p)
