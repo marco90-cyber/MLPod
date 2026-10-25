@@ -593,7 +593,6 @@ private fun LimiterPanel(env: AppEnv, eq: EqConfig) {
             NeonSlider(
                 value = eq.limiterThresholdDb, valueRange = -12f..0f,
                 onValueChange = { v -> settings.updateEq { it.copy(limiterThresholdDb = (v * 2).roundToInt() / 2f) } },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
                 modifier = Modifier.weight(1f)
             )
         }
@@ -602,7 +601,6 @@ private fun LimiterPanel(env: AppEnv, eq: EqConfig) {
             NeonSlider(
                 value = eq.limiterReleaseMs, valueRange = 20f..500f,
                 onValueChange = { v -> settings.updateEq { it.copy(limiterReleaseMs = (v / 10f).roundToInt() * 10f) } },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
                 modifier = Modifier.weight(1f)
             )
         }
