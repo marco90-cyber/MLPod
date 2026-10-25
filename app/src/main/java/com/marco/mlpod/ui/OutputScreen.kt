@@ -127,6 +127,15 @@ fun OutputScreen(env: AppEnv) {
                 .padding(horizontal = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            Section("Uscita attiva") {
+                val om = engine.outputMonitor
+                KV(
+                    if (om.exact) "Dispositivo (indicato da Android)" else "Dispositivo (stimato dall'elenco uscite)",
+                    om.kind.label + if (om.name.isNotBlank()) " · ${om.name}" else ""
+                )
+                KV("Qualità scelta", "${env.settings.outputBits} bit (dal prossimo brano)")
+            }
+
             Section("Flusso audio in uso") {
                 if (track == null) {
                     Line("Nessun brano in riproduzione")

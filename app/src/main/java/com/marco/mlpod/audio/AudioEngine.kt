@@ -39,6 +39,8 @@ class AudioEngine(
     val analyzer = Analyzer()
     val eqProcessor = EqAudioProcessor(analyzer)
 
+    val outputMonitor = OutputMonitor(app)
+
     val player: ExoPlayer
 
     var currentTrack by mutableStateOf<Track?>(null)
@@ -68,6 +70,12 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
+    /** Cambia la qualità di uscita (16/24/32 bit); si applica dal prossimo brano. */
+    fun setOutputBits(bits: Int) {
+        settings.outputBits = bits
+        eqProcessor.outputBits = bits
+    }
+
     private var queue: List<Track> = emptyList()
     private var consecutiveErrors = 0
     private var runtimeSampleRate = 0
@@ -76,7 +84,7 @@ class AudioEngine(
     private var controllerFuture: Any? = null
 
     init {
-        val floatOutput = settings.hiResOutput
+        eqProcessor.outputBits = settings.outputBits
         val factory = object : DefaultRenderersFactory(app) {
             override fun buildAudioSink(
                 context: Context,
@@ -84,7 +92,7 @@ class AudioEngine(
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink {
                 val inner = DefaultAudioSink.Builder(context)
-                    .setEnableFloatOutput(floatOutput)
+                    .setEnableFloatOutput(true)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .build()
                 // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.

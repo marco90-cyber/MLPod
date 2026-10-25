@@ -61,6 +61,8 @@ class Settings(context: Context) {
 
     // Aspetto
     var bodyColorId by StringPref(sp, "body_color", "argento")
+    /** 0 = giorno, 1 = notte, 2 = segui il sistema */
+    var themeMode by IntPref(sp, "theme_mode", 2)
     var coverInMenu by BoolPref(sp, "cover_in_menu", true)
     var keepScreenOn by BoolPref(sp, "keep_screen_on", false)
 
@@ -96,6 +98,8 @@ class Settings(context: Context) {
 
     /** 0 = no, 1 = tutto, 2 = brano singolo */
     var repeatMode by IntPref(sp, "repeat", 0)
+    /** Qualità di uscita: 16, 24 o 32 bit */
+    var outputBits by IntPref(sp, "output_bits", 32)
     var hiResOutput by BoolPref(sp, "hires_output", true)
     var volume by FloatPref(sp, "volume", 1f)
 

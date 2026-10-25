@@ -23,6 +23,8 @@ constexpr int kEncPcm16 = 0;
 constexpr int kEncPcm24 = 1;
 constexpr int kEncPcm32 = 2;
 constexpr int kEncFloat = 3;
+/** Uscita float 32 bit con valori quantizzati a 24 bit (TPDF), per la scelta "24 bit". */
+constexpr int kEncFloat24 = 4;
 
 inline int bytesPerSample(int enc) {
     switch (enc) {
@@ -192,7 +194,7 @@ public:
             runFilters(frames);
             if (limiterOn_) limiter_.process(scratch_.data(), frames);
         }
-        encode(out, outEnc, n, !bypass);
+        encode(out, outEnc, n, !bypass || inEnc != kEncPcm16);
         return frames;
     }
 
@@ -296,6 +298,14 @@ private:
                 if (q < -32768) q = -32768;
                 const int16_t o = static_cast<int16_t>(q);
                 std::memcpy(out + i * 2, &o, 2);
+            }
+        } else if (outEnc == kEncFloat24) {
+            const float scale = 8388608.0f;  // 2^23
+            float* o = reinterpret_cast<float*>(out);
+            for (size_t i = 0; i < n; i++) {
+                float v = s[i] * scale;
+                if (dither) v += nextRand() - nextRand();
+                o[i] = std::lrintf(v) / scale;
             }
         } else {
             std::memcpy(out, s, n * sizeof(float));

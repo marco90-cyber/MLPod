@@ -69,6 +69,8 @@ class NativeDsp {
         const val ENC_24 = 1
         const val ENC_32 = 2
         const val ENC_FLOAT = 3
+        /** Float 32 bit con valori quantizzati a 24 bit (solo uscita). */
+        const val ENC_FLOAT24 = 4
 
         val available: Boolean = try {
             System.loadLibrary("mlpoddsp")

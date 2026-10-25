@@ -43,7 +43,13 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Equalizer
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -85,12 +91,20 @@ import kotlinx.coroutines.delay
 import kotlin.math.max
 import kotlin.math.min
 
-private object LcdColors {
-    val bg = Color(0xFFF2F4F8)
-    val rowText = Color(0xFF111418)
-    val subText = Color(0xFF6B7078)
-    val headerTop = Color(0xFFF7F8FB)
-    val headerBottom = Color(0xFFC9CED8)
+internal object LcdColors {
+    /** Tema scuro attivo (impostato da IpodApp). */
+    var dark by androidx.compose.runtime.mutableStateOf(false)
+
+    private fun pick(light: Long, night: Long) = Color(if (dark) night else light)
+
+    val bg get() = pick(0xFFF2F4F8, 0xFF0B0C10)
+    val rowText get() = pick(0xFF111418, 0xFFF2F4F8)
+    val subText get() = pick(0xFF6B7078, 0xFF9AA0AA)
+    val dimText get() = pick(0xFFA0A5AE, 0xFF5E636C)
+    val strongText get() = pick(0xFF3A4150, 0xFFC8CCD4)
+    val headerTop get() = pick(0xFFF7F8FB, 0xFF2B2D34)
+    val headerBottom get() = pick(0xFFC9CED8, 0xFF14151A)
+    val track get() = pick(0xFFC3C8D2, 0xFF30333B)
     val selTop = Color(0xFF5B9BF0)
     val selBottom = Color(0xFF2F6FD6)
     val paneTop = Color(0xFF05070D)
@@ -151,7 +165,7 @@ private fun LcdHeader(env: AppEnv, entry: Entry) {
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                 contentDescription = "Indietro",
-                tint = Color(0xFF3A4150),
+                tint = LcdColors.strongText,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 4.dp)
@@ -178,16 +192,32 @@ private fun LcdHeader(env: AppEnv, entry: Entry) {
             Modifier.align(Alignment.CenterEnd).padding(end = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (env.engine.isPlaying) {
+            val om = env.engine.outputMonitor
+            Icon(
+                outIcon(om.kind), contentDescription = om.kind.label,
+                tint = LcdColors.strongText, modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            if (env.engine.currentTrack != null) {
                 Icon(
-                    Icons.Filled.PlayArrow, contentDescription = null,
-                    tint = Color(0xFF3A4150), modifier = Modifier.size(16.dp)
+                    if (env.engine.isPlaying) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    contentDescription = if (env.engine.isPlaying) "Riproduzione" else "Pausa",
+                    tint = LcdColors.strongText, modifier = Modifier.size(16.dp)
                 )
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(6.dp))
             }
             BatteryIcon()
         }
     }
+}
+
+private fun outIcon(k: com.marco.mlpod.audio.OutKind): ImageVector = when (k) {
+    com.marco.mlpod.audio.OutKind.Speaker -> Icons.Filled.PhoneAndroid
+    com.marco.mlpod.audio.OutKind.Wired -> Icons.Filled.Headphones
+    com.marco.mlpod.audio.OutKind.Bluetooth -> Icons.Filled.Bluetooth
+    com.marco.mlpod.audio.OutKind.Usb -> Icons.Filled.Usb
+    com.marco.mlpod.audio.OutKind.Hdmi -> Icons.Filled.Tv
+    com.marco.mlpod.audio.OutKind.Other -> Icons.Filled.Speaker
 }
 
 @Composable
@@ -217,12 +247,12 @@ private fun BatteryIcon() {
     Canvas(Modifier.size(width = 26.dp, height = 12.dp)) {
         val bodyW = size.width - 3.dp.toPx()
         drawRoundRect(
-            color = Color(0xFF4A505C), size = Size(bodyW, size.height),
+            color = LcdColors.strongText, size = Size(bodyW, size.height),
             cornerRadius = CornerRadius(2.5.dp.toPx()),
             style = androidx.compose.ui.graphics.drawscope.Stroke(1.2.dp.toPx())
         )
         drawRect(
-            color = Color(0xFF4A505C),
+            color = LcdColors.strongText,
             topLeft = Offset(bodyW + 0.5.dp.toPx(), size.height * 0.3f),
             size = Size(2.2.dp.toPx(), size.height * 0.4f)
         )
@@ -313,7 +343,7 @@ private fun MenuView(env: AppEnv, entry: Entry, screen: MenuScreen) {
 
 @Composable
 private fun MenuRow(item: MenuItem, selected: Boolean, onClick: () -> Unit) {
-    val textColor = if (selected) Color.White else if (item.dimmed) Color(0xFFA0A5AE) else LcdColors.rowText
+    val textColor = if (selected) Color.White else if (item.dimmed) LcdColors.dimText else LcdColors.rowText
     val subColor = if (selected) Color(0xFFDCE8FF) else LcdColors.subText
     val bg = if (selected) Modifier.background(Brush.verticalGradient(listOf(LcdColors.selTop, LcdColors.selBottom)))
     else Modifier
@@ -573,7 +603,7 @@ private fun NowPlayingView(env: AppEnv) {
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
         )
         Text(
-            track.artist, color = Color(0xFF3A4150), fontSize = 15.sp,
+            track.artist, color = LcdColors.strongText, fontSize = 15.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
         )
         Text(
@@ -705,7 +735,7 @@ private fun SeekBar(
         val h = 8.dp.toPx()
         val y = (size.height - h) / 2f
         drawRoundRect(
-            color = Color(0xFFC3C8D2), topLeft = Offset(0f, y), size = Size(size.width, h),
+            color = LcdColors.track, topLeft = Offset(0f, y), size = Size(size.width, h),
             cornerRadius = CornerRadius(h / 2)
         )
         drawRoundRect(
@@ -729,7 +759,7 @@ private fun VolumeBar(volume: Float) {
             val h = 8.dp.toPx()
             val y = (size.height - h) / 2f
             drawRoundRect(
-                color = Color(0xFFC3C8D2), topLeft = Offset(0f, y), size = Size(size.width, h),
+                color = LcdColors.track, topLeft = Offset(0f, y), size = Size(size.width, h),
                 cornerRadius = CornerRadius(h / 2)
             )
             drawRoundRect(

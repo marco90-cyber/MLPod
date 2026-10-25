@@ -45,7 +45,14 @@ fun IpodApp(env: AppEnv) {
 @Composable
 private fun IpodContent(env: AppEnv) {
     val activity = LocalContext.current as? Activity
-    val style = BodyStyles.byId(env.settings.bodyColorId)
+    val night = when (env.settings.themeMode) {
+        0 -> false
+        1 -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    LcdColors.dark = night
+    val baseStyle = BodyStyles.byId(env.settings.bodyColorId)
+    val style = if (night) baseStyle.nightWheel() else baseStyle
 
     val lightBody = style.top.luminance() > 0.5f
     SideEffect {

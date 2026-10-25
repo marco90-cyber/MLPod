@@ -27,7 +27,7 @@ data class DspInfo(
  * preamp + bassi + N bande parametriche + alti (biquad in doppia precisione) e limiter look-ahead.
  * I coefficienti sono calcolati in Kotlin ([EqMath]) e passati al motore nativo.
  *
- * Ingressi: PCM 16/24/32 bit e float. Uscita: 16 bit se l'ingresso è 16 bit, altrimenti float 32 bit.
+ * Ingressi: PCM 16/24/32 bit e float. Uscita scelta dall'utente: 16 bit (con dither), 24 bit o 32 bit (float).
  * Con DSP spento si ha un bypass reale (PCM16 bit-exact).
  */
 class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
@@ -39,6 +39,10 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
 
     @Volatile
     private var configVersion = 0
+
+    /** Qualità di uscita scelta dall'utente: 16, 24 o 32 (vale dal prossimo brano). */
+    @Volatile
+    var outputBits: Int = 32
 
     @Volatile
     var info: DspInfo = DspInfo()
@@ -80,7 +84,11 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         channels = inputAudioFormat.channelCount
         encoding = enc
         analyzer.sampleRate = sampleRate
-        outEnc = if (inEnc == NativeDsp.ENC_16) NativeDsp.ENC_16 else NativeDsp.ENC_FLOAT
+        outEnc = when (outputBits) {
+            16 -> NativeDsp.ENC_16
+            24 -> NativeDsp.ENC_FLOAT24
+            else -> NativeDsp.ENC_FLOAT
+        }
         dsp.configure(sampleRate, channels)
         info = DspInfo(
             sampleRate = sampleRate, channels = channels,
@@ -107,6 +115,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         NativeDsp.ENC_16 -> "PCM 16 bit"
         NativeDsp.ENC_24 -> "PCM 24 bit"
         NativeDsp.ENC_32 -> "PCM 32 bit"
+        NativeDsp.ENC_FLOAT24 -> "float 32 bit (24 bit utili)"
         else -> "PCM float 32 bit"
     }
 

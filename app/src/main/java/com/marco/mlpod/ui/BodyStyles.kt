@@ -12,7 +12,13 @@ class BodyStyle(
     val wheel: Color,
     val wheelLabel: Color,
     val center: Color,
-)
+) {
+    /** Ghiera scura per la modalità notte (la scocca resta quella scelta). */
+    fun nightWheel() = BodyStyle(
+        id, name, top, bottom,
+        wheel = Color(0xFF1F2024), wheelLabel = Color(0xFFB9BCC4), center = Color(0xFF131417),
+    )
+}
 
 object BodyStyles {
     private fun colored(id: String, name: String, hex: Long): BodyStyle {

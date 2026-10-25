@@ -203,6 +203,9 @@ fun AppEnv.settingsScreen(): MenuScreen = MenuScreen("Impostazioni") {
 
 fun AppEnv.appearanceScreen(): MenuScreen = MenuScreen("Aspetto") {
     listOf(
+        MenuItem("Tema", value = listOf("Giorno", "Notte", "Sistema")[settings.themeMode.coerceIn(0, 2)]) {
+            settings.themeMode = (settings.themeMode + 1) % 3
+        },
         MenuItem("Colore scocca", value = BodyStyles.byId(settings.bodyColorId).name, chevron = true) {
             val idx = BodyStyles.all.indexOfFirst { it.id == settings.bodyColorId }.coerceAtLeast(0)
             nav.push(colorScreen())
@@ -291,10 +294,13 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
         MenuItem("Mescola", value = if (engine.shuffleOn) "Sì" else "No") { engine.toggleShuffle() },
         MenuItem("Ripeti", value = repeatLabels[engine.repeatMode.coerceIn(0, 2)]) { engine.cycleRepeat() },
         MenuItem(
-            "Uscita Hi-Res 32 bit",
-            value = if (settings.hiResOutput) "Sì" else "No",
-            sub = "Si applica al riavvio dell'app"
-        ) { settings.hiResOutput = !settings.hiResOutput },
+            "Qualità uscita",
+            value = "${settings.outputBits} bit",
+            sub = "16, 24 o 32 bit · dal prossimo brano"
+        ) {
+            val next = when (settings.outputBits) { 16 -> 24; 24 -> 32; else -> 16 }
+            engine.setOutputBits(next)
+        },
         MenuItem("Equalizzatore", chevron = true) { overlay = Overlay.Equalizer },
         MenuItem("Uscita audio", chevron = true) { overlay = Overlay.Output },
     )
@@ -325,7 +331,7 @@ fun AppEnv.audioInfoScreen(): MenuScreen = MenuScreen("Info audio") {
             info("Brano", t.title),
             info("Formato", engine.audioInfo.ifBlank { t.detailLine() }),
             info("Hi-Res", if (engine.hiResNow) "Sì" else "No"),
-            info("Uscita", if (settings.hiResOutput) "Float 32 bit" else "Standard"),
+            info("Uscita", "${settings.outputBits} bit"),
             info("Equalizzatore", if (settings.eq.enabled) "${settings.eq.bandCount} bande attivo" else "Spento"),
             info("File", t.uri),
         )
