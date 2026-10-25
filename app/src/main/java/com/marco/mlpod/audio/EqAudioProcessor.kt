@@ -55,6 +55,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     private var stageCount = 0
     private var preDb = 0f
     private var scratchIn: ByteBuffer? = null
+    private var firstBuffer = true
 
     fun setConfig(config: EqConfig) {
         pending = config
@@ -85,6 +86,8 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
             sampleRate = sampleRate, channels = channels,
             inEncoding = encName(inEnc), outEncoding = encName(outEnc),
         )
+        firstBuffer = true
+        AppLog.i("Audio", "DSP configurato: ${encName(inEnc)}, $sampleRate Hz, $channels can. -> ${encName(outEnc)}")
         appliedVersion = -1
         val outC = if (outEnc == NativeDsp.ENC_16) C.ENCODING_PCM_16BIT else C.ENCODING_PCM_FLOAT
         return AudioProcessor.AudioFormat(sampleRate, channels, outC)
@@ -165,6 +168,10 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
         refreshIfNeeded()
+        if (firstBuffer) {
+            firstBuffer = false
+            AppLog.i("Audio", "DSP: primo buffer ricevuto ($remaining byte, diretto=${inputBuffer.isDirect}, analizzatore=${analyzer.enabled})")
+        }
 
         val bps = when (encoding) {
             C.ENCODING_PCM_16BIT -> 2

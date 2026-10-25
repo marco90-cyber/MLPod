@@ -22,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -83,6 +84,16 @@ private fun fmtHz(f: Float): String =
 private class AnalyzerState {
     var tick by mutableIntStateOf(0)
 
+    // Testi osservabili: cambiano ad ogni aggiornamento, quindi la UI li ridisegna sempre.
+    var txtPeak by mutableStateOf("")
+    var txtRms by mutableStateOf("")
+    var txtPhase by mutableStateOf("")
+    var txtBand by mutableStateOf("")
+    var txtBandVal by mutableStateOf("")
+    var txtPpm0 by mutableStateOf("")
+    var txtPpm1 by mutableStateOf("")
+    var buffers by mutableStateOf("")
+
     val barDb = FloatArray(2) { FLOOR }
     val barHold = FloatArray(2) { FLOOR }
     private val barHoldT = IntArray(2)
@@ -117,7 +128,24 @@ private class AnalyzerState {
         for (i in 0 until NB) bandPeak[i] = FLOOR
     }
 
-    fun update(an: Analyzer) {
+    fun update(an: Analyzer, sel: Int) {
+        step(an)
+        publishTexts(an, sel)
+    }
+
+    private fun publishTexts(an: Analyzer, sel: Int) {
+        txtPeak = "PICCO VERO   L ${fdb(tpCur[0])}/${fdb(tpMax[0])}  R ${fdb(tpCur[1])}/${fdb(tpMax[1])}"
+        txtRms = "RMS          L ${fdb(rmsCur[0])}/${fdb(rmsMax[0])}  R ${fdb(rmsCur[1])}/${fdb(rmsMax[1])}"
+        txtPhase = "Fase " + String.format(Locale.ITALY, "%+.2f", corr)
+        val b = sel.coerceIn(0, NB - 1)
+        txtBand = "1/3 ott. ${fmtHz(bandFreq(b))}"
+        txtBandVal = "${fdb(bands[b])} / ${fdb(bandPeak[b])} dBFS"
+        txtPpm0 = "${fdb(ppm[0])}/${fdb(ppmMax[0])}"
+        txtPpm1 = "${fdb(ppm[1])}/${fdb(ppmMax[1])}"
+        buffers = "campioni ricevuti: ${an.published}"
+    }
+
+    private fun step(an: Analyzer) {
         val pub = an.published
         val active = pub != lastPub && pub > NFFT
         lastPub = pub
@@ -215,7 +243,7 @@ fun AnalyzerView(env: AppEnv) {
     }
     LaunchedEffect(Unit) {
         while (isActive) {
-            withContext(Dispatchers.Default) { st.update(an) }
+            withContext(Dispatchers.Default) { st.update(an, env.analyzerBand) }
             st.tick++
             delay(33)
         }
@@ -237,8 +265,8 @@ fun AnalyzerView(env: AppEnv) {
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             GonioPanel(st, frame, Modifier.weight(1f))
-            PpmDial("L", st.ppm[0], st.ppmMax[0], env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
-            PpmDial("R", st.ppm[1], st.ppmMax[1], env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
+            PpmDial("L", st.ppm[0], st.ppmMax[0], st.txtPpm0, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
+            PpmDial("R", st.ppm[1], st.ppmMax[1], st.txtPpm1, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
         }
         Spacer(Modifier.height(4.dp))
         RtaPanel(env, st, frame, Modifier.weight(1f))
@@ -281,9 +309,9 @@ private fun LevelSection(st: AnalyzerState, frame: Int) {
             if (c == 0) Spacer(Modifier.height(3.dp))
         }
         Spacer(Modifier.height(3.dp))
-        Mono("PICCO VERO   L ${fdb(st.tpCur[0])}/${fdb(st.tpMax[0])}  R ${fdb(st.tpCur[1])}/${fdb(st.tpMax[1])}", AnCyan)
-        Mono("RMS          L ${fdb(st.rmsCur[0])}/${fdb(st.rmsMax[0])}  R ${fdb(st.rmsCur[1])}/${fdb(st.rmsMax[1])}", AnCyan)
-        Mono("dBFS  corrente / massimo", AnText, 9)
+        Mono(st.txtPeak, AnCyan)
+        Mono(st.txtRms, AnCyan)
+        Mono("dBFS  corrente / massimo   ·   " + st.buffers, AnText, 9)
     }
 }
 
@@ -327,12 +355,12 @@ private fun GonioPanel(st: AnalyzerState, frame: Int, modifier: Modifier) {
             drawRect(colr, topLeft = Offset(min(mid, x), 0f), size = Size(abs(x - mid), size.height))
             drawLine(Color.White, Offset(mid, 0f), Offset(mid, size.height), 1.5f)
         }
-        Mono("Fase " + String.format(Locale.ITALY, "%+.2f", st.corr), AnText, 9)
+        Mono(st.txtPhase, AnText, 9)
     }
 }
 
 @Composable
-private fun PpmDial(label: String, value: Float, max: Float, ref: Float, modifier: Modifier) {
+private fun PpmDial(label: String, value: Float, max: Float, text: String, ref: Float, modifier: Modifier) {
     Column(
         modifier
             .clip(RoundedCornerShape(8.dp))
@@ -404,7 +432,7 @@ private fun PpmDial(label: String, value: Float, max: Float, ref: Float, modifie
                 modifier = Modifier.align(Alignment.TopEnd)
             )
         }
-        Mono("${fdb(value)}/${fdb(max)}", Color(0xFF222222), 9)
+        Mono(text, Color(0xFF222222), 9)
     }
 }
 
@@ -468,8 +496,8 @@ private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, modifier: Modif
         Spacer(Modifier.height(2.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Mono("1/3 ott. ${fmtHz(bandFreq(sel))}", AnCyan, 11)
-                Mono("${fdb(st.bands[sel])} / ${fdb(st.bandPeak[sel])} dBFS", Color.White, 11)
+                Mono(st.txtBand, AnCyan, 11)
+                Mono(st.txtBandVal, Color.White, 11)
             }
             Box(
                 Modifier
