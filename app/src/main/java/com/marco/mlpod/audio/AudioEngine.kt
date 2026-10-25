@@ -83,11 +83,12 @@ class AudioEngine(
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink {
-                return DefaultAudioSink.Builder(context)
+                val inner = DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(floatOutput)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .setAudioProcessors(arrayOf(eqProcessor))
                     .build()
+                // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.
+                return ProcessingAudioSink(inner, eqProcessor)
             }
         }
         player = ExoPlayer.Builder(app, factory)
