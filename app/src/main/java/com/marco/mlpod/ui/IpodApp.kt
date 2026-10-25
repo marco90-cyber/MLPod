@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -115,21 +117,34 @@ private fun IpodContent(env: AppEnv) {
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            EqualizerScreen(env)
+            OverlayHost { EqualizerScreen(env) }
         }
         AnimatedVisibility(
             visible = env.overlay == Overlay.Output,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            OutputScreen(env)
+            OverlayHost { OutputScreen(env) }
         }
         AnimatedVisibility(
             visible = env.overlay == Overlay.Log,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            LogScreen(env)
+            OverlayHost { LogScreen(env) }
         }
     }
+}
+
+/**
+ * Contenitore delle schermate a tutto schermo: intercetta i tocchi, così non arrivano
+ * alla ghiera e allo schermo LCD che stanno sotto (altrimenti le zone vuote azionano la ghiera).
+ */
+@Composable
+private fun OverlayHost(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { detectTapGestures { } }
+    ) { content() }
 }

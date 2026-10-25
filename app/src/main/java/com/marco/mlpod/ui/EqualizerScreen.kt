@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -141,7 +142,7 @@ fun EqualizerScreen(env: AppEnv) {
             )
             Text(if (eq.enabled) "Attivo" else "Spento", color = Color(0xFF9AA0AA), fontSize = 13.sp)
             Spacer(Modifier.width(8.dp))
-            Switch(
+            NeonSwitch(
                 checked = eq.enabled,
                 onCheckedChange = { on ->
                     env.feedback.tapScreen()
@@ -216,14 +217,14 @@ fun EqualizerScreen(env: AppEnv) {
         Spacer(Modifier.height(6.dp))
 
         // comandi: modalità a sinistra, contenuto a destra
-        Row(Modifier.fillMaxWidth().height(184.dp)) {
+        Row(Modifier.fillMaxWidth().height(232.dp)) {
             Column(
                 Modifier.width(78.dp).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                ModeButton("Eq.", mode == 0) { env.feedback.tapScreen(); mode = 0 }
-                ModeButton("Tono", mode == 1) { env.feedback.tapScreen(); mode = 1 }
-                ModeButton("Limite", mode == 2) { env.feedback.tapScreen(); mode = 2 }
+                ModeButton("Eq.", mode == 0, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 0 }
+                ModeButton("Tono", mode == 1, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 1 }
+                ModeButton("Limite", mode == 2, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 2 }
             }
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -263,11 +264,13 @@ fun EqualizerScreen(env: AppEnv) {
                         }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                when (mode) {
-                    0 -> BandsPanel(env, eq)
-                    1 -> TonePanel(env, eq) { target = it }
-                    else -> LimiterPanel(env, eq)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    when (mode) {
+                        0 -> BandsPanel(env, eq)
+                        1 -> TonePanel(env, eq) { target = it }
+                        else -> LimiterPanel(env, eq)
+                    }
                 }
             }
         }
@@ -362,6 +365,69 @@ fun EqualizerScreen(env: AppEnv) {
 
 private val NeonGreen = Color(0xFF00E676)
 
+/** Interruttore nel tema dell'equalizzatore (verde neon su grafite). */
+@Composable
+private fun NeonSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Box(
+        Modifier
+            .width(48.dp)
+            .height(28.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (checked) NeonGreen else Color(0xFF3A3D45))
+            .clickable { onCheckedChange(!checked) }
+            .padding(3.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+    ) {
+        Box(
+            Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(if (checked) Color(0xFF0C0C0E) else Color(0xFF9AA0AA))
+        )
+    }
+}
+
+/** Slider orizzontale sottile, con linea neon e maniglia chiara come gli slider delle bande. */
+@Composable
+private fun NeonSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    modifier: Modifier = Modifier,
+) {
+    val change = rememberUpdatedState(onValueChange)
+    val lo = valueRange.start
+    val hi = valueRange.endInclusive
+    fun valueAt(x: Float, w: Float, pad: Float): Float {
+        val frac = ((x - pad) / (w - 2 * pad).coerceAtLeast(1f)).coerceIn(0f, 1f)
+        return lo + frac * (hi - lo)
+    }
+    Canvas(
+        modifier
+            .height(32.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { o -> change.value(valueAt(o.x, this.size.width.toFloat(), 14.dp.toPx())) }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { c, _ ->
+                    c.consume()
+                    change.value(valueAt(c.position.x, this.size.width.toFloat(), 14.dp.toPx()))
+                }
+            }
+    ) {
+        val pad = 14.dp.toPx()
+        val cy = this.size.height / 2f
+        val frac = ((value - lo) / (hi - lo)).coerceIn(0f, 1f)
+        val xv = pad + frac * (this.size.width - 2 * pad)
+        drawLine(Color(0xFF3A3D45), Offset(pad, cy), Offset(this.size.width - pad, cy), 3.dp.toPx(), StrokeCap.Round)
+        drawLine(NeonGreen.copy(alpha = 0.25f), Offset(pad, cy), Offset(xv, cy), 8.dp.toPx(), StrokeCap.Round)
+        drawLine(NeonGreen, Offset(pad, cy), Offset(xv, cy), 3.dp.toPx(), StrokeCap.Round)
+        drawCircle(Color(0xFF26282E), 11.dp.toPx(), Offset(xv, cy))
+        drawCircle(Color(0xFF4A4E58), 11.dp.toPx(), Offset(xv, cy), style = Stroke(1.dp.toPx()))
+        drawCircle(Color(0xFFE8EAF0), 4.dp.toPx(), Offset(xv, cy))
+    }
+}
+
 /** Riga di stato: solo valori realmente in uso dal motore DSP. */
 private fun dspLine(i: DspInfo): String {
     if (i.sampleRate <= 0) return "DSP IN ATTESA DI UN BRANO"
@@ -376,17 +442,19 @@ private fun dspLine(i: DspInfo): String {
 }
 
 @Composable
-private fun ModeButton(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun ModeButton(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .height(40.dp)
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) Color(0xFF3A3D45) else ChipColor)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) NeonGreen else ChipColor)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            text, color = if (selected) Color(0xFF0C0C0E) else Color.White, fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -424,7 +492,7 @@ private fun BandsPanel(env: AppEnv, eq: EqConfig) {
     val settings = env.settings
     var menu by remember { mutableStateOf(false) }
     val options = (listOf(5, 10, 15, 31) + eq.bandCount).distinct().sorted()
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(12.dp)) {
+    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(12.dp)) {
         Text("Numero di bande", color = Color(0xFF9AA0AA), fontSize = 13.sp)
         Spacer(Modifier.height(6.dp))
         Box {
@@ -460,7 +528,7 @@ private fun BandsPanel(env: AppEnv, eq: EqConfig) {
         }
         Spacer(Modifier.height(10.dp))
         Text(
-            "Tocca la frequenza sotto uno slider per cambiare frequenza e Q. Doppio tocco sullo slider: azzera la banda.",
+            "Tocca la frequenza sotto uno slider per cambiare frequenza e Q. Doppio tocco: azzera la banda.",
             color = Color(0xFF7C828C), fontSize = 12.sp
         )
     }
@@ -471,7 +539,7 @@ private fun BandsPanel(env: AppEnv, eq: EqConfig) {
 private fun TonePanel(env: AppEnv, eq: EqConfig, onFreq: (FreqTarget) -> Unit) {
     val settings = env.settings
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 8.dp),
+        Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -502,10 +570,11 @@ private fun LimiterPanel(env: AppEnv, eq: EqConfig) {
     }
     Column(
         Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(RoundedCornerShape(14.dp))
             .background(PanelColor)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.SpaceEvenly
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Limiter", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -514,32 +583,32 @@ private fun LimiterPanel(env: AppEnv, eq: EqConfig) {
                 color = Color(0xFF9AA0AA), fontSize = 12.sp
             )
             Spacer(Modifier.width(8.dp))
-            Switch(
+            NeonSwitch(
                 checked = eq.limiterOn,
                 onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { c -> c.copy(limiterOn = on) } }
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Soglia ${String.format(Locale.ITALY, "%.1f", eq.limiterThresholdDb)} dB", color = Color(0xFFDDE1EA), fontSize = 12.sp, modifier = Modifier.width(96.dp))
-            Slider(
+            NeonSlider(
                 value = eq.limiterThresholdDb, valueRange = -12f..0f,
                 onValueChange = { v -> settings.updateEq { it.copy(limiterThresholdDb = (v * 2).roundToInt() / 2f) } },
                 colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
-                modifier = Modifier.height(28.dp)
+                modifier = Modifier.weight(1f)
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Rilascio ${eq.limiterReleaseMs.roundToInt()} ms", color = Color(0xFFDDE1EA), fontSize = 12.sp, modifier = Modifier.width(96.dp))
-            Slider(
+            NeonSlider(
                 value = eq.limiterReleaseMs, valueRange = 20f..500f,
                 onValueChange = { v -> settings.updateEq { it.copy(limiterReleaseMs = (v / 10f).roundToInt() * 10f) } },
                 colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
-                modifier = Modifier.height(28.dp)
+                modifier = Modifier.weight(1f)
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Auto-headroom", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Switch(
+            NeonSwitch(
                 checked = eq.autoHeadroom,
                 onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { it.copy(autoHeadroom = on) } }
             )
@@ -594,7 +663,7 @@ private fun ToneKnob(
             color = Color(0xFF9AA0AA), fontSize = 14.sp
         )
         Spacer(Modifier.height(6.dp))
-        Knob(value = percent, color = color, size = 110.dp, onTick = onTick, onChange = onChange)
+        Knob(value = percent, color = color, size = 88.dp, onTick = onTick, onChange = onChange)
         Spacer(Modifier.height(6.dp))
         Box(
             Modifier
@@ -840,8 +909,8 @@ private fun FreqDialog(
             Column {
                 Text(fmtFreqLong(current), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Accent)
                 Spacer(Modifier.height(8.dp))
-                Slider(
-                    value = pos,
+                NeonSlider(
+                    value = pos, valueRange = 0f..1f,
                     onValueChange = { p ->
                         val raw = min * (max / min).pow(p)
                         val step = when {
@@ -858,7 +927,6 @@ private fun FreqDialog(
                         }
                         onEq(newEq)
                     },
-                    colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(fmtFreqLong(min), fontSize = 12.sp, color = Color(0xFF9AA0AA))
@@ -875,13 +943,12 @@ private fun FreqDialog(
                             " ott.)",
                         fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Accent
                     )
-                    Slider(
-                        value = qPos,
+                    NeonSlider(
+                        value = qPos, valueRange = 0f..1f,
                         onValueChange = { p ->
                             val v = EqConfig.MIN_Q * (EqConfig.MAX_Q / EqConfig.MIN_Q).pow(p)
                             onEq(eq.withQ(idx, (v * 20f).roundToInt() / 20f))
                         },
-                        colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("largo", fontSize = 12.sp, color = Color(0xFF9AA0AA))
