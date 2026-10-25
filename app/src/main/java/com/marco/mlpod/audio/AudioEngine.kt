@@ -208,7 +208,7 @@ class AudioEngine(
         })
         AppLog.i(
             "Audio",
-            "Motore audio pronto (uscita ${if (floatOutput) "Hi-Res float 32 bit" else "standard"})"
+            "Motore audio pronto (uscita ${settings.outputBits} bit)"
         )
     }
 
