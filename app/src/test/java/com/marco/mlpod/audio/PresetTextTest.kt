@@ -50,7 +50,8 @@ class PowerampJsonTest {
         val c = l[0].second
         assertEquals(5, c.bandCount)
         assertEquals(0, c.bassPercent)
-        assertEquals(0, c.typeAt(2))
+        assertEquals(0, c.typeAt(1))
+        assertEquals(1, c.typeAt(3))
         assertEquals(4.86f, c.preampDb, 1e-3f)
         assert(c.qs.all { it > 0.2f })
     }
