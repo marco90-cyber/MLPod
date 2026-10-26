@@ -147,8 +147,9 @@ static void testChannels() {
 }
 
 static double rmsOf(const std::vector<int16_t>& v, size_t skip) {
+    // esclude transitorio iniziale e finale del filtro (skip frame stereo per lato)
     double a = 0; size_t n = 0;
-    for (size_t i = skip; i < v.size(); i++) { a += double(v[i]) * v[i]; n++; }
+    for (size_t i = skip * 2; i + skip * 2 < v.size(); i++) { a += double(v[i]) * v[i]; n++; }
     return std::sqrt(a / n) / 32768.0;
 }
 
@@ -169,11 +170,13 @@ static void testResample() {
         }
         total += e.flush(reinterpret_cast<uint8_t*>(&out[2 * total]), kEncPcm16, 8192);
         out.resize(2 * total);
-        const double r = rmsOf(out, 4000);
+        const double r = rmsOf(out, 12000);
         if (pass == 0) {
+            std::printf("totale frames: %d\n", total);
             CHECK(std::abs(total - 48000) <= 4, "ricampionamento 96->48: numero di campioni corretto (con coda)");
             CHECK(std::abs(20 * std::log10(r / (0.5 / std::sqrt(2.0)))) < 0.05, "ricampionamento: livello 1 kHz invariato (<0,05 dB)");
         } else {
+            std::printf("alias rms: %.1f dB\n", 20 * std::log10(r + 1e-12));
             CHECK(20 * std::log10(r + 1e-12) < -80.0, "ricampionamento: alias a 30 kHz sotto -80 dB");
         }
     }

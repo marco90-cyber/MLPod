@@ -41,7 +41,8 @@ public:
             return false;
         }
         const double delayOut = soxr_delay(h_);
-        tail_ = static_cast<int>(std::ceil(delayOut * inRate / outRate)) + 256;
+        // il ritardo reale si conosce solo dopo i primi dati: margine ampio (100 ms di ingresso)
+        tail_ = std::max(static_cast<int>(std::ceil(delayOut * inRate / outRate)), inRate / 10) + 256;
         return true;
     }
 
