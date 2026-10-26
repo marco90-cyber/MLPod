@@ -58,9 +58,8 @@ public:
     }
 
     void close() {
-        if (running_.exchange(false)) {
-            if (th_.joinable()) th_.join();
-        }
+        running_ = false;
+        if (th_.joinable()) th_.join();
         for (auto& u : urb_) {
             std::free(u);
             u = nullptr;
@@ -89,6 +88,7 @@ public:
     void setPaused(bool p) { paused_ = p; }
     void setGain(float g) { gain_ = g; }
     bool failed() const { return failed_.load(); }
+    int lastErrno() const { return err_.load(); }
 
     void flush() {
         std::lock_guard<std::mutex> lk(m_);
@@ -151,6 +151,7 @@ private:
         for (int i = 0; i < kUrbs; i++) {
             fill(i);
             if (!submit(i)) {
+                err_ = errno;
                 failed_ = true;
                 running_ = false;
                 break;
@@ -179,6 +180,7 @@ private:
                 }
                 fill(idx);
                 if (!submit(idx)) {
+                    err_ = errno;
                     failed_ = true;
                     running_ = false;
                     break;
@@ -203,6 +205,7 @@ private:
     long long real_[kUrbs] = {};
     std::atomic<long long> played_{0};
     std::atomic<bool> running_{false}, paused_{true}, failed_{false};
+    std::atomic<int> err_{0};
     std::atomic<float> gain_{1.0f};
     std::thread th_;
 };

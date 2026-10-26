@@ -217,6 +217,7 @@ class UsbAudioController(private val ctx: Context) {
         val intervalUs = 1000 shl (a.interval - 1).coerceIn(0, 7)
         val h = NativeUsb.nOpen(c.fileDescriptor, a.ep, r, intervalUs, a.maxPacket)
         if (h == 0L) {
+            AppLog.w("Audio", "USB: nOpen fallita")
             c.releaseInterface(target); c.close(); status = "Apertura USB fallita (uso Android)"; return false
         }
         conn = c; claimed = target; handle = h; rate = r
@@ -253,7 +254,18 @@ class UsbAudioController(private val ctx: Context) {
     /** Scrive PCM16 stereo; consuma da [buf] quello che entra. */
     fun write(buf: ByteBuffer) {
         val h = handle
-        if (h == 0L || !buf.hasRemaining()) return
+        if (h != 0L && NativeUsb.nFailed(h)) {
+            val e = NativeUsb.nErrno(h)
+            closeOutput()
+            status = "Trasferimento USB interrotto (errore $e)"
+            AppLog.w("Audio", "USB: $status")
+        }
+        if (handle == 0L) {
+            // uscita chiusa: scarta i dati per non bloccare il player
+            buf.position(buf.limit())
+            return
+        }
+        if (!buf.hasRemaining()) return
         val n = buf.remaining()
         val used: Int
         if (buf.isDirect) {
