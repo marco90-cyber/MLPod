@@ -27,9 +27,9 @@ data class EqConfig(
     val qs: List<Float> = autoQs(defaultFreqs(10)),
     val preampDb: Float = 0f,
     /** 0..100, 50 = neutro (0 dB), 0 = -12 dB, 100 = +12 dB. */
-    val bassPercent: Int = 50,
+    val bassPercent: Int = 0,
     val bassFreq: Float = 100f,
-    val treblePercent: Int = 50,
+    val treblePercent: Int = 0,
     val trebleFreq: Float = 10000f,
     val limiterOn: Boolean = true,
     val autoHeadroom: Boolean = false,
@@ -104,7 +104,7 @@ data class EqConfig(
 
     /** True se serve elaborare l'audio (altrimenti bypass reale). */
     fun dspActive(): Boolean =
-        enabled || bassPercent != 50 || treblePercent != 50
+        enabled || bassPercent != 0 || treblePercent != 0
 
     /** Risposta in dB a una certa frequenza (per il grafico). */
     fun responseDb(f: Double, fs: Double = 48000.0): Double {
@@ -121,7 +121,7 @@ data class EqConfig(
         o.put("freqs", JSONArray(freqs.map { it.toDouble() }))
         o.put("gains", JSONArray(gains.map { it.toDouble() }))
         o.put("qs", JSONArray(qs.map { it.toDouble() }))
-        o.put("toneV", 2)
+        o.put("toneV", 3)
         o.put("limiter", limiterOn)
         o.put("autoHeadroom", autoHeadroom)
         o.put("limThr", limiterThresholdDb.toDouble())
@@ -216,11 +216,17 @@ data class EqConfig(
                 val qs = if (qa != null && qa.length() == n) {
                     List(n) { qa.getDouble(it).toFloat().coerceIn(MIN_Q, MAX_Q) }
                 } else autoQs(freqs)
-                // Vecchio formato: manopole 0..100% = 0..+12 dB. Nuovo: 50% = neutro.
-                val v2 = o.optInt("toneV", 1) >= 2
+                // Formati: v1 manopole 0..100% = 0..+12 dB; v2 50% = neutro (-12..+12 dB);
+                // v3 (attuale) 0..100% = 0..+10 dB, solo rinforzo.
+                val tv = o.optInt("toneV", 1)
                 fun tone(key: String): Int {
-                    val raw = o.optInt(key, if (v2) 50 else 0).coerceIn(0, 100)
-                    return if (v2) raw else 50 + raw / 2
+                    val raw = o.optInt(key, if (tv == 2) 50 else 0).coerceIn(0, 100)
+                    val db = when (tv) {
+                        1 -> raw / 100.0 * 12.0
+                        2 -> (raw - 50) / 50.0 * 12.0
+                        else -> return raw
+                    }
+                    return Math.round(db / 10.0 * 100.0).toInt().coerceIn(0, 100)
                 }
                 EqConfig(
                     enabled = o.optBoolean("enabled", false),
@@ -324,7 +330,8 @@ object EqMath {
     }
 
     /** Posizione delle manopole -> dB (0..100, 50 = 0 dB, estremi = -12 / +12 dB). */
-    fun toneDb(percent: Int): Double = (percent.coerceIn(0, 100) - 50) / 50.0 * 12.0
+    /** Manopole Bassi/Alti: 0..100 = 0..+10 dB (solo rinforzo). */
+    fun toneDb(percent: Int): Double = percent.coerceIn(0, 100) / 10.0
 
     /**
      * Elenco fisso di stadi: [bassi, banda 0..N-1, alti].

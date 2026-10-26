@@ -90,9 +90,9 @@ class EqMathTest {
 
     @Test
     fun toneKnobMapping() {
-        assertEquals(0.0, EqMath.toneDb(50), 1e-9)
-        assertEquals(-12.0, EqMath.toneDb(0), 1e-9)
-        assertEquals(12.0, EqMath.toneDb(100), 1e-9)
+        assertEquals(0.0, EqMath.toneDb(0), 1e-9)
+        assertEquals(5.0, EqMath.toneDb(50), 1e-9)
+        assertEquals(10.0, EqMath.toneDb(100), 1e-9)
     }
 
     @Test
@@ -139,11 +139,15 @@ class EqMathTest {
         // vecchio formato: manopole 0..100% = 0..+12 dB, nessun campo toneV / qs
         val old = """{"enabled":true,"bandCount":10,"bass":100,"treble":0,"preamp":0.0}"""
         val cfg = EqConfig.fromJson(old)
-        assertEquals(100, cfg.bassPercent)   // +12 dB come prima
-        assertEquals(50, cfg.treblePercent)  // 0 dB come prima
+        assertEquals(100, cfg.bassPercent)   // +12 dB -> limitato a +10 dB
+        assertEquals(0, cfg.treblePercent)   // 0 dB come prima
         assertEquals(10, cfg.qs.size)
         val mid = EqConfig.fromJson("""{"bass":50}""")
-        assertEquals(75, mid.bassPercent)    // +6 dB come prima
+        assertEquals(60, mid.bassPercent)    // +6 dB come prima
+        // formato intermedio (50 = neutro, -12..+12 dB): il rinforzo resta, i tagli diventano 0
+        assertEquals(60, EqConfig.fromJson("""{"toneV":2,"bass":75}""").bassPercent)
+        assertEquals(0, EqConfig.fromJson("""{"toneV":2,"bass":30}""").bassPercent)
+        assertEquals(0, EqConfig.fromJson("""{"toneV":2,"treble":50}""").treblePercent)
     }
 
     @Test

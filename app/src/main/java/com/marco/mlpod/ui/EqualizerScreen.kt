@@ -668,7 +668,7 @@ private fun ToneKnob(
             color = Color(0xFF9AA0AA), fontSize = 14.sp
         )
         Spacer(Modifier.height(6.dp))
-        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onDetent = onDetent, onChange = onChange)
+        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onDetent = onDetent, zero = 0, stepSize = 10, onChange = onChange)
         Spacer(Modifier.height(6.dp))
         Box(
             Modifier
