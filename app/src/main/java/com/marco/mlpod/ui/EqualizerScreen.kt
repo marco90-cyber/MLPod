@@ -116,6 +116,41 @@ fun EqualizerScreen(env: AppEnv) {
     var saveName by remember { mutableStateOf("") }
     var deletePreset by remember { mutableStateOf<String?>(null) }
     var moreMenu by remember { mutableStateOf(false) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val ok = try {
+                val text = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                val parsed = com.marco.mlpod.audio.PresetText.parse(text, settings.eq)
+                if (parsed != null) {
+                    var name = "Importato"
+                    ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) name = c.getString(0).substringBeforeLast('.')
+                            .replace(Regex("(?i)_?(parametric|fixedband)eq$"), "")
+                    }
+                    settings.eq = parsed
+                    settings.saveUserPreset(name, parsed)
+                    true
+                } else false
+            } catch (_: Exception) { false }
+            android.widget.Toast.makeText(ctx, if (ok) "Preset importato" else "File non riconosciuto", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            val ok = try {
+                ctx.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                    it.write(com.marco.mlpod.audio.PresetText.export(settings.eq))
+                }
+                true
+            } catch (_: Exception) { false }
+            android.widget.Toast.makeText(ctx, if (ok) "Preset esportato" else "Esportazione non riuscita", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val scroll = rememberScrollState()
     var viewW by remember { mutableIntStateOf(0) }
 
@@ -296,6 +331,14 @@ fun EqualizerScreen(env: AppEnv) {
                 Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
                     PresetRow("+ Salva la configurazione attuale", accent = true) {
                         presetsDialog = false; saveName = ""; saveDialog = true
+                    }
+                    PresetRow("Importa da file (Poweramp / AutoEQ)", accent = true) {
+                        presetsDialog = false
+                        importLauncher.launch(arrayOf("text/plain", "application/json", "application/octet-stream", "*/*"))
+                    }
+                    PresetRow("Esporta la configurazione attuale", accent = true) {
+                        presetsDialog = false
+                        exportLauncher.launch("MLPod_ParametricEQ.txt")
                     }
                     val mine = settings.userPresets
                     if (mine.isNotEmpty()) {
