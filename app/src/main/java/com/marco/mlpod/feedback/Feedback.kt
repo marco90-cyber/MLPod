@@ -65,6 +65,21 @@ class Feedback(context: Context, private val settings: Settings) {
         if (settings.soundScreen) click()
     }
 
+    /** Piccola vibrazione leggera (un passo di 1 dB degli slider), senza suono. */
+    fun softTick() {
+        if (!settings.hapticScreen) return
+        val v = vibrator ?: return
+        if (!v.hasVibrator()) return
+        try {
+            val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+            else VibrationEffect.createOneShot(6, 60)
+            v.vibrate(effect)
+        } catch (e: Throwable) {
+            AppLog.d("Feedback", "Vibrazione non riuscita: ${e.message}")
+        }
+    }
+
     /** "Scatto" di centraggio (zero dello slider/manopola): vibrazione più lunga e netta. */
     fun detent() {
         if (settings.hapticScreen) {

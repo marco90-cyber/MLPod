@@ -168,6 +168,7 @@ fun EqualizerScreen(env: AppEnv) {
                     onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
                     onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
                     onDetent = { env.feedback.detent() },
+                    onStep = { env.feedback.softTick() },
                     onLabelClick = null,
                 )
             }
@@ -194,6 +195,7 @@ fun EqualizerScreen(env: AppEnv) {
                             onChange = { v -> settings.updateEq { it.withGain(i, v) } },
                             onReset = { settings.updateEq { it.withGain(i, 0f) } },
                             onDetent = { env.feedback.detent() },
+                            onStep = { env.feedback.softTick() },
                             onLabelClick = { target = FreqTarget.Band(i) },
                         )
                     }
@@ -689,12 +691,13 @@ private fun BandColumn(
     onChange: (Float) -> Unit,
     onReset: () -> Unit,
     onDetent: () -> Unit,
+    onStep: () -> Unit,
     onLabelClick: (() -> Unit)?,
 ) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         VerticalGainSlider(
             value = value, range = EqConfig.GAIN_RANGE, color = color,
-            onChange = onChange, onReset = onReset, onDetent = onDetent,
+            onChange = onChange, onReset = onReset, onDetent = onDetent, onStep = onStep,
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
         val labelMod = if (onLabelClick != null) {
@@ -719,8 +722,11 @@ private fun VerticalGainSlider(
     onChange: (Float) -> Unit,
     onReset: () -> Unit,
     onDetent: () -> Unit = {},
+    onStep: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val step = rememberUpdatedState(onStep)
+    val lastInt = remember { intArrayOf(value.roundToInt()) }
     val change = rememberUpdatedState(onChange)
     val reset = rememberUpdatedState(onReset)
     val detent = rememberUpdatedState(onDetent)
@@ -739,7 +745,10 @@ private fun VerticalGainSlider(
     androidx.compose.runtime.SideEffect { atZero[0] = cur.value == 0f }
 
     fun emit(v: Float) {
+        val n = v.roundToInt()
         if (v == 0f && !atZero[0]) detent.value()
+        else if (n != lastInt[0] && v != 0f) step.value()   // un passo ogni 1 dB
+        lastInt[0] = n
         atZero[0] = v == 0f
         change.value(v)
     }
