@@ -347,7 +347,7 @@ fun EqualizerScreen(env: AppEnv) {
                         Text("Le mie", color = Color(0xFF9AA0AA), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                         for (up in mine) {
                             PresetRow(up.name, onDelete = { deletePreset = up.name }) {
-                                settings.eq = up.config.copy(enabled = true)
+                                settings.eq = up.config.copy(enabled = true, bassPercent = eq.bassPercent, bassFreq = eq.bassFreq, treblePercent = eq.treblePercent, trebleFreq = eq.trebleFreq)
                                 presetsDialog = false
                             }
                         }

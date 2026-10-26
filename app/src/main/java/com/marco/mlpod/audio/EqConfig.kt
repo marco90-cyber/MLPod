@@ -25,6 +25,8 @@ data class EqConfig(
     val freqs: List<Float> = defaultFreqs(10),
     val gains: List<Float> = List(10) { 0f },
     val qs: List<Float> = autoQs(defaultFreqs(10)),
+    /** Tipo di filtro per banda: 0 = low shelf, 1 = high shelf, 2 = peaking (vuoto = tutte peaking). */
+    val types: List<Int> = emptyList(),
     val preampDb: Float = 0f,
     /** 0..100, 50 = neutro (0 dB), 0 = -12 dB, 100 = +12 dB. */
     val bassPercent: Int = 0,
@@ -39,12 +41,14 @@ data class EqConfig(
     val limiterReleaseMs: Float = 80f,
 ) {
     /** Cambia il numero di bande ricampionando la curva attuale. */
+    fun typeAt(i: Int): Int = types.getOrNull(i) ?: 2
+
     fun withBandCount(n: Int): EqConfig {
         val count = n.coerceIn(MIN_BANDS, MAX_BANDS)
         if (count == bandCount) return this
         val newFreqs = defaultFreqs(count)
         val newGains = newFreqs.map { f -> interpolate(freqs, gains, f) }
-        return copy(bandCount = count, freqs = newFreqs, gains = newGains, qs = autoQs(newFreqs))
+        return copy(bandCount = count, freqs = newFreqs, gains = newGains, qs = autoQs(newFreqs), types = emptyList())
     }
 
     fun withQ(index: Int, q: Float): EqConfig {
@@ -121,6 +125,7 @@ data class EqConfig(
         o.put("freqs", JSONArray(freqs.map { it.toDouble() }))
         o.put("gains", JSONArray(gains.map { it.toDouble() }))
         o.put("qs", JSONArray(qs.map { it.toDouble() }))
+        if (types.any { it != 2 }) o.put("types", JSONArray(types))
         o.put("toneV", 3)
         o.put("limiter", limiterOn)
         o.put("autoHeadroom", autoHeadroom)
@@ -216,6 +221,8 @@ data class EqConfig(
                 val qs = if (qa != null && qa.length() == n) {
                     List(n) { qa.getDouble(it).toFloat().coerceIn(MIN_Q, MAX_Q) }
                 } else autoQs(freqs)
+                val ta = o.optJSONArray("types")
+                val types = if (ta != null && ta.length() == n) List(n) { ta.optInt(it, 2) } else emptyList()
                 // Formati: v1 manopole 0..100% = 0..+12 dB; v2 50% = neutro (-12..+12 dB);
                 // v3 (attuale) 0..100% = 0..+10 dB, solo rinforzo.
                 val tv = o.optInt("toneV", 1)
@@ -234,6 +241,7 @@ data class EqConfig(
                     freqs = freqs,
                     gains = gains,
                     qs = qs,
+                    types = types,
                     preampDb = o.optDouble("preamp", 0.0).toFloat(),
                     bassPercent = tone("bass"),
                     bassFreq = o.optDouble("bassFreq", 100.0).toFloat(),
@@ -348,7 +356,11 @@ object EqMath {
             val f = cfg.freqs[i].toDouble()
             out.add(
                 if (cfg.enabled && f < nyquistLimit)
-                    peaking(fs, f, cfg.qFor(i), cfg.gains[i].toDouble()) else IDENTITY
+                    when (cfg.typeAt(i)) {
+                        0 -> lowShelf(fs, f, cfg.gains[i].toDouble())
+                        1 -> highShelf(fs, f, cfg.gains[i].toDouble())
+                        else -> peaking(fs, f, cfg.qFor(i), cfg.gains[i].toDouble())
+                    } else IDENTITY
             )
         }
         out.add(

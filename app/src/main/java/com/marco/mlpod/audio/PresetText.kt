@@ -20,6 +20,8 @@ object PresetText {
     )
     private val preampRe = Regex("""Preamp\s*:\s*([-+\d.,]+)\s*(?:dB)?""", RegexOption.IGNORE_CASE)
 
+    private class F(val f: Float, val g: Float, val q: Float, val type: Int)
+
     private fun num(s: String): Float? = s.trim().replace(',', '.').toFloatOrNull()
 
     /** Nome + configurazione. Accetta il JSON di Poweramp (elenco di preset) oppure il testo AutoEQ. */
@@ -56,9 +58,7 @@ object PresetText {
         fun band(type: Int, f: Float, q: Float, g: Float) = org.json.JSONObject()
             .put("type", type).put("channels", 0).put("frequency", f.toDouble())
             .put("q", q.toDouble()).put("gain", g.toDouble()).put("color", 0)
-        if (cfg.bassPercent != 0) bands.put(band(0, cfg.bassFreq, 0.8f, EqMath.toneDb(cfg.bassPercent).toFloat()))
-        if (cfg.treblePercent != 0) bands.put(band(1, cfg.trebleFreq, 0.6f, EqMath.toneDb(cfg.treblePercent).toFloat()))
-        for (i in 0 until cfg.bandCount) bands.put(band(2, cfg.freqs[i], cfg.qFor(i).toFloat(), cfg.gains[i]))
+        for (i in 0 until cfg.bandCount) bands.put(band(cfg.typeAt(i), cfg.freqs[i], cfg.qFor(i).toFloat(), cfg.gains[i]))
         val o = org.json.JSONObject().put("name", name).put("preamp", cfg.preampDb.toDouble())
             .put("parametric", true).put("bands", bands)
         return org.json.JSONArray().put(o).toString(2)
@@ -68,11 +68,7 @@ object PresetText {
     fun parse(text: String, base: EqConfig): EqConfig? {
         val lines = text.lines()
         var preamp = 0f
-        val pk = ArrayList<Triple<Float, Float, Float>>() // freq, gain, q
-        var bass = 0
-        var bassF = base.bassFreq
-        var treble = 0
-        var trebleF = base.trebleFreq
+        val pk = ArrayList<F>()
         var graphic: List<Pair<Float, Float>>? = null
         var found = false
         for (raw in lines) {
@@ -96,13 +92,9 @@ object PresetText {
             val g = num(m.groupValues[4]) ?: continue
             val q = m.groupValues[5].let { if (it.isEmpty()) 0.707f else num(it) ?: 0.707f }
             when (m.groupValues[2].uppercase(Locale.ROOT)) {
-                "LS", "LSC", "LSQ" ->
-                    if (g > 0f && bass == 0) { bass = (g * 10f).roundToInt().coerceIn(0, 100); bassF = f.coerceIn(20f, 500f) }
-                    else pk.add(Triple(f, g, 0.7f))
-                "HS", "HSC", "HSQ" ->
-                    if (g > 0f && treble == 0) { treble = (g * 10f).roundToInt().coerceIn(0, 100); trebleF = f.coerceIn(1000f, 20000f) }
-                    else pk.add(Triple(f, g, 0.7f))
-                "PK", "PEQ", "PEAK" -> pk.add(Triple(f, g, q))
+                "LS", "LSC", "LSQ" -> pk.add(F(f, g, 0f, 0))
+                "HS", "HSC", "HSQ" -> pk.add(F(f, g, 0f, 1))
+                "PK", "PEQ", "PEAK" -> pk.add(F(f, g, q, 2))
                 else -> {}
             }
         }
@@ -110,8 +102,6 @@ object PresetText {
         var cfg = base.copy(
             enabled = true,
             preampDb = preamp.coerceIn(-24f, 12f),
-            bassPercent = bass, bassFreq = bassF,
-            treblePercent = treble, trebleFreq = trebleF,
         )
         val g = graphic
         if (g != null) {
@@ -119,22 +109,24 @@ object PresetText {
         }
         if (pk.isNotEmpty()) {
             // ordina e rispetta la distanza minima fra le bande
-            val sorted = pk.sortedBy { it.first }.map { Triple(it.first.coerceIn(EqConfig.MIN_FREQ, EqConfig.MAX_FREQ), it.second, it.third) }
-            val kept = ArrayList<Triple<Float, Float, Float>>()
+            val sorted = pk.sortedBy { it.f }
+            val kept = ArrayList<F>()
             for (t in sorted) {
-                if (kept.isEmpty() || t.first >= kept.last().first * 1.05f) kept.add(t)
-                else kept[kept.lastIndex] = Triple(kept.last().first, kept.last().second + t.second, kept.last().third)
+                val fr = t.f.coerceIn(EqConfig.MIN_FREQ, EqConfig.MAX_FREQ)
+                val minF = if (kept.isEmpty()) 0f else kept.last().f * 1.05f
+                if (fr >= minF) kept.add(F(fr, t.g, t.q, t.type))
+                else if (minF <= EqConfig.MAX_FREQ) kept.add(F(minF, t.g, t.q, t.type))
             }
             val list = kept.take(EqConfig.MAX_BANDS)
             val n = list.size.coerceAtLeast(EqConfig.MIN_BANDS)
-            val freqs = ArrayList(list.map { it.first })
-            val gains = ArrayList(list.map { it.second.coerceIn(-EqConfig.GAIN_RANGE, EqConfig.GAIN_RANGE) })
+            val freqs = ArrayList(list.map { it.f })
+            val gains = ArrayList(list.map { it.g.coerceIn(-EqConfig.GAIN_RANGE, EqConfig.GAIN_RANGE) })
             val autoQ = EqConfig.autoQs(freqs)
-            val qs = ArrayList(list.mapIndexed { i, t -> if (t.third <= 0f) autoQ[i] else t.third.coerceIn(EqConfig.MIN_Q, EqConfig.MAX_Q) })
-            // completa fino al minimo di bande con bande neutre
+            val qs = ArrayList(list.mapIndexed { i, t -> if (t.q <= 0f) autoQ[i] else t.q.coerceIn(EqConfig.MIN_Q, EqConfig.MAX_Q) })
+            val types = ArrayList(list.map { it.type })
             var f = freqs.last()
-            while (freqs.size < n) { f = (f * 1.3f).coerceAtMost(EqConfig.MAX_FREQ); freqs.add(f); gains.add(0f); qs.add(1f) }
-            cfg = cfg.copy(bandCount = n, freqs = freqs, gains = gains, qs = qs)
+            while (freqs.size < n) { f = (f * 1.3f).coerceAtMost(EqConfig.MAX_FREQ); freqs.add(f); gains.add(0f); qs.add(1f); types.add(2) }
+            cfg = cfg.copy(bandCount = n, freqs = freqs, gains = gains, qs = qs, types = if (types.any { it != 2 }) types else emptyList())
         } else {
             cfg = cfg.copy(gains = List(cfg.bandCount) { 0f })
         }
@@ -146,14 +138,11 @@ object PresetText {
         val sb = StringBuilder()
         sb.append("Preamp: ").append(f(cfg.preampDb, 1)).append(" dB\n")
         var n = 1
-        if (cfg.bassPercent != 0)
-            sb.append("Filter ${n++}: ON LS Fc ${f(cfg.bassFreq, 0)} Hz Gain ${f(EqMath.toneDb(cfg.bassPercent).toFloat(), 1)} dB Q 0.70\n")
         for (i in 0 until cfg.bandCount) {
             if (abs(cfg.gains[i]) < 0.05f) continue
-            sb.append("Filter ${n++}: ON PK Fc ${f(cfg.freqs[i], 0)} Hz Gain ${f(cfg.gains[i], 1)} dB Q ${f(cfg.qs.getOrElse(i) { 1f }, 2)}\n")
+            val ty = when (cfg.typeAt(i)) { 0 -> "LS"; 1 -> "HS"; else -> "PK" }
+            sb.append("Filter ${n++}: ON $ty Fc ${f(cfg.freqs[i], 0)} Hz Gain ${f(cfg.gains[i], 1)} dB Q ${f(cfg.qs.getOrElse(i) { 1f }, 2)}\n")
         }
-        if (cfg.treblePercent != 0)
-            sb.append("Filter ${n++}: ON HS Fc ${f(cfg.trebleFreq, 0)} Hz Gain ${f(EqMath.toneDb(cfg.treblePercent).toFloat(), 1)} dB Q 0.70\n")
         return sb.toString()
     }
 }

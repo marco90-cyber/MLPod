@@ -11,19 +11,20 @@ class PresetTextTest {
         val t = "Preamp: -6.4 dB\nFilter 1: ON LS Fc 105 Hz Gain 6.5 dB Q 0.70\nFilter 2: ON PK Fc 1000 Hz Gain -2.0 dB Q 1.41\nFilter 3: OFF PK Fc 3000 Hz Gain 3.0 dB Q 2\nFilter 4: ON HS Fc 8000 Hz Gain 12 dB Q 0.7\n"
         val c = PresetText.parse(t, EqConfig())!!
         assertEquals(-6.4f, c.preampDb, 1e-4f)
-        assertEquals(65, c.bassPercent)
-        assertEquals(100, c.treblePercent)
+        assertEquals(0, c.bassPercent)   // il tono resta separato dall'equalizzatore
+        assertEquals(0, c.treblePercent)
         assertEquals(3, c.bandCount)
-        assertEquals(1000f, c.freqs[0], 1e-3f)
-        assertEquals(-2f, c.gains[0], 1e-4f)
+        assertEquals(0, c.typeAt(0))
+        assertEquals(105f, c.freqs[0], 1e-3f)
+        assertEquals(2, c.typeAt(1))
+        assertEquals(1, c.typeAt(2))
     }
 
     @Test
     fun exportRoundTrip() {
-        val c = EqConfig(enabled = true).withGain(2, 4f).withGain(5, -3f).copy(preampDb = -2f, bassPercent = 30)
+        val c = EqConfig(enabled = true).withGain(2, 4f).withGain(5, -3f).copy(preampDb = -2f)
         val r = PresetText.parse(PresetText.export(c), EqConfig())!!
-        assertEquals(30, r.bassPercent)
-        assertEquals(-2f, r.preampDb, 1e-4f)
+                assertEquals(-2f, r.preampDb, 1e-4f)
         assertEquals(2, r.freqs.indices.count { r.gains[it] != 0f })
     }
 
@@ -47,18 +48,18 @@ class PowerampJsonTest {
         assertEquals(1, l.size)
         assertEquals("One Odio", l[0].first)
         val c = l[0].second
-        assertEquals(3, c.bandCount)
-        assertEquals(25, c.bassPercent)
+        assertEquals(5, c.bandCount)
+        assertEquals(0, c.bassPercent)
+        assertEquals(0, c.typeAt(2))
         assertEquals(4.86f, c.preampDb, 1e-3f)
         assert(c.qs.all { it > 0.2f })
     }
 
     @Test
     fun exportJsonRoundTrip() {
-        val c = EqConfig(enabled = true).withGain(3, 2f).copy(preampDb = -1f, treblePercent = 40)
+        val c = EqConfig(enabled = true).withGain(3, 2f).copy(preampDb = -1f)
         val r = PresetText.parseMulti(PresetText.exportPoweramp("T", c), EqConfig(), "x")[0].second
-        assertEquals(40, r.treblePercent)
-        assertEquals(10, r.bandCount)
+                assertEquals(10, r.bandCount)
         assertEquals(2f, r.gains[3], 1e-3f)
     }
 }
