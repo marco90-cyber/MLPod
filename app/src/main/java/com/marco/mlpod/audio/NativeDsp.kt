@@ -39,6 +39,14 @@ class NativeDsp {
         outBuf: ByteBuffer, outEnc: Int, bypass: Boolean,
     ): Int = if (handle != 0L) nProcess(handle, inBuf, inOffset, inEnc, frames, outBuf, outEnc, bypass) else 0
 
+    fun setResample(outRate: Int) {
+        if (handle != 0L) nSetResample(handle, outRate)
+    }
+
+    fun maxOut(inFrames: Int): Int = if (handle != 0L) nMaxOut(handle, inFrames) else inFrames
+
+    fun flushIn(): Int = if (handle != 0L) nFlushIn(handle) else 0
+
     fun flush(outBuf: ByteBuffer, outEnc: Int, maxFrames: Int): Int =
         if (handle != 0L) nFlush(handle, outBuf, outEnc, maxFrames) else 0
 
@@ -55,6 +63,9 @@ class NativeDsp {
     private external fun nSetFilters(h: Long, coefs: DoubleArray, stages: Int, preGain: Double)
     private external fun nSetLimiter(h: Long, on: Boolean, thr: Float, rel: Float, look: Float)
     private external fun nReset(h: Long)
+    private external fun nSetResample(h: Long, outRate: Int)
+    private external fun nMaxOut(h: Long, inFrames: Int): Int
+    private external fun nFlushIn(h: Long): Int
     private external fun nLatency(h: Long): Int
     private external fun nLimiterGainDb(h: Long, reset: Boolean): Float
     private external fun nProcess(

@@ -43,9 +43,11 @@ class ProcessingAudioSink(
         eosQueued = false
         if (usbOn) { usb?.closeOutput(); usbOn = false }
         usbEos = false
-        val wantUsb = usb != null && usb.enabled && MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType &&
-            inputFormat.channelCount == 2 && usb.canUse(inputFormat.sampleRate)
+        val target = if (usb != null && usb.enabled && MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType &&
+            inputFormat.channelCount == 2) usb.pickRate(inputFormat.sampleRate, usb.resample) else 0
+        val wantUsb = target > 0
         processor.usbMode = wantUsb
+        processor.targetRate = if (wantUsb && target != inputFormat.sampleRate) target else 0
         var fmt = inputFormat
         if (MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType && inputFormat.pcmEncoding != Format.NO_VALUE) {
             try {
@@ -53,7 +55,7 @@ class ProcessingAudioSink(
                 if (processor.isActive) {
                     processor.flush()
                     active = true
-                    fmt = inputFormat.buildUpon().setPcmEncoding(out.encoding).build()
+                    fmt = inputFormat.buildUpon().setPcmEncoding(out.encoding).setSampleRate(out.sampleRate).build()
                 } else {
                     AppLog.w("Audio", "DSP non applicabile a questo formato (codifica ${inputFormat.pcmEncoding})")
                 }
@@ -61,9 +63,9 @@ class ProcessingAudioSink(
                 AppLog.w("Audio", "DSP: formato non gestito: ${e.message}")
             }
         }
-        if (wantUsb && fmt.pcmEncoding == C.ENCODING_PCM_16BIT && usb != null) {
+        if (wantUsb && fmt.pcmEncoding == C.ENCODING_PCM_16BIT && fmt.sampleRate == target && usb != null) {
             super.reset()
-            if (usb.open(fmt.sampleRate)) {
+            if (usb.open(fmt.sampleRate, inputFormat.sampleRate)) {
                 usbOn = true
                 usb.setGain(volume)
                 usb.setPaused(!playing)

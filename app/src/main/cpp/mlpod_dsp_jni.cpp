@@ -37,6 +37,18 @@ JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeDsp_nReset(JNIEnv*, jobj
     reinterpret_cast<Engine*>(h)->reset();
 }
 
+JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeDsp_nSetResample(JNIEnv*, jobject, jlong h, jint outRate) {
+    reinterpret_cast<Engine*>(h)->setResample(outRate);
+}
+
+JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeDsp_nMaxOut(JNIEnv*, jobject, jlong h, jint inFrames) {
+    return reinterpret_cast<Engine*>(h)->maxOutFrames(inFrames);
+}
+
+JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeDsp_nFlushIn(JNIEnv*, jobject, jlong h) {
+    return reinterpret_cast<Engine*>(h)->flushInFrames();
+}
+
 JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeDsp_nLatency(JNIEnv*, jobject, jlong h) {
     return reinterpret_cast<Engine*>(h)->latencyFrames();
 }

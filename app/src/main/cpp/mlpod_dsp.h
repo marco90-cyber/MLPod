@@ -17,6 +17,8 @@
 #include <cstring>
 #include <vector>
 
+#include "mlpod_resample.h"
+
 namespace mlpod {
 
 constexpr int kEncPcm16 = 0;
@@ -143,6 +145,7 @@ public:
         limiter_.prepare(sr_, ch_, lookaheadMs_);
         limiter_.setParams(thrDb_, relMs_);
         limiterReady_ = true;
+        rsOn_ = false;
     }
 
     // coef: 5 valori per stadio [b0 b1 b2 a1 a2], normalizzati con a0 = 1.
@@ -175,6 +178,7 @@ public:
     void reset() {
         std::fill(state_.begin(), state_.end(), 0.0);
         limiter_.reset();
+        if (rsOn_) rs_.reset();
     }
 
     int latencyFrames() const { return limiterOn_ ? limiter_.latencyFrames() : 0; }
@@ -185,7 +189,14 @@ public:
     }
     void resetMeter() { limiter_.resetMeter(); }
 
-    // Elabora `frames` frame. Ritorna i frame scritti (== frames).
+    // Ricampionamento finale verso outRate (0 o uguale all'ingresso = spento). Dopo configure().
+    void setResample(int outRate) {
+        rsOn_ = rs_.prepare(sr_, outRate, ch_);
+    }
+    int maxOutFrames(int inFrames) const { return rsOn_ ? rs_.maxOut(inFrames) : inFrames; }
+    int flushInFrames() const { return (limiterOn_ ? limiter_.latencyFrames() : 0) + (rsOn_ ? rs_.taps() : 0); }
+
+    // Elabora `frames` frame. Ritorna i frame scritti (con ricampionamento può differire da frames).
     int process(const uint8_t* in, int inEnc, int frames, uint8_t* out, int outEnc, bool bypass) {
         const size_t n = static_cast<size_t>(frames) * ch_;
         if (scratch_.size() < n) scratch_.resize(n);
@@ -194,20 +205,38 @@ public:
             runFilters(frames);
             if (limiterOn_) limiter_.process(scratch_.data(), frames);
         }
-        encode(out, outEnc, n, !bypass || inEnc != kEncPcm16);
+        const bool dither = !bypass || inEnc != kEncPcm16 || rsOn_;
+        if (rsOn_) {
+            const size_t cap = static_cast<size_t>(rs_.maxOut(frames)) * ch_;
+            if (rsOut_.size() < cap) rsOut_.resize(cap);
+            const int m = rs_.process(scratch_.data(), frames, rsOut_.data());
+            encode(out, outEnc, rsOut_.data(), static_cast<size_t>(m) * ch_, dither);
+            return m;
+        }
+        encode(out, outEnc, scratch_.data(), n, dither);
         return frames;
     }
 
-    // Svuota il ritardo del limiter a fine brano. Ritorna i frame scritti.
+    // Svuota limiter e ricampionatore a fine brano. Ritorna i frame scritti (max maxFrames).
     int flush(uint8_t* out, int outEnc, int maxFrames) {
-        if (!limiterOn_) return 0;
-        const int frames = std::min(limiter_.latencyFrames(), maxFrames);
-        const size_t n = static_cast<size_t>(frames) * ch_;
+        const int fin = limiterOn_ ? limiter_.latencyFrames() : 0;
+        if (fin == 0 && !rsOn_) return 0;
+        const size_t n = static_cast<size_t>(fin) * ch_;
         if (scratch_.size() < n) scratch_.resize(n);
         std::fill(scratch_.begin(), scratch_.begin() + n, 0.0f);
-        limiter_.process(scratch_.data(), frames);
-        encode(out, outEnc, n, true);
-        return frames;
+        if (fin > 0) limiter_.process(scratch_.data(), fin);
+        if (!rsOn_) {
+            const int frames = std::min(fin, maxFrames);
+            encode(out, outEnc, scratch_.data(), static_cast<size_t>(frames) * ch_, true);
+            return frames;
+        }
+        const size_t cap = static_cast<size_t>(rs_.maxOut(fin + rs_.taps()) + rs_.maxOut(rs_.taps())) * ch_;
+        if (rsOut_.size() < cap) rsOut_.resize(cap);
+        int m = fin > 0 ? rs_.process(scratch_.data(), fin, rsOut_.data()) : 0;
+        m += rs_.flushTail(rsOut_.data() + static_cast<size_t>(m) * ch_);
+        m = std::min(m, maxFrames);
+        encode(out, outEnc, rsOut_.data(), static_cast<size_t>(m) * ch_, true);
+        return m;
     }
 
 private:
@@ -284,8 +313,7 @@ private:
         if (bad) std::fill(state_.begin(), state_.end(), 0.0);  // filtro instabile: riparti da zero
     }
 
-    void encode(uint8_t* out, int outEnc, size_t n, bool dither) {
-        const float* s = scratch_.data();
+    void encode(uint8_t* out, int outEnc, const float* s, size_t n, bool dither) {
         if (outEnc == kEncPcm16) {
             for (size_t i = 0; i < n; i++) {
                 float v = s[i] * 32768.0f;
@@ -324,7 +352,9 @@ private:
     double pre_ = 1.0;
     std::vector<double> coef_, state_, work_;
     std::vector<uint8_t> active_;
-    std::vector<float> scratch_;
+    std::vector<float> scratch_, rsOut_;
+    Resampler rs_;
+    bool rsOn_ = false;
     Limiter limiter_;
     bool limiterOn_ = false, limiterReady_ = false;
     float thrDb_ = -0.5f, relMs_ = 80.0f, lookaheadMs_ = 5.0f;

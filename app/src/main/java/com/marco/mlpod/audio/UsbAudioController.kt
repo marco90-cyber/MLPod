@@ -28,6 +28,10 @@ class UsbAudioController(private val ctx: Context) {
     @Volatile
     var enabled: Boolean = false
 
+    /** Ricampiona (nell'app) se il DAC non accetta la frequenza del file. */
+    @Volatile
+    var resample: Boolean = true
+
     var status by mutableStateOf("Spenta")
         private set
 
@@ -170,35 +174,47 @@ class UsbAudioController(private val ctx: Context) {
     private fun chooseAlt(list: List<Alt>, r: Int): Alt? =
         list.firstOrNull { it.channels == 2 && it.subframe == 2 && it.bits == 16 && it.supports(r) }
 
-    /** true se la riproduzione a [r] Hz può andare diretta al DAC (stereo 16 bit). */
-    fun canUse(r: Int): Boolean {
-        if (!enabled) return false
-        if (!NativeUsb.available) { status = "Libreria nativa non disponibile"; return false }
+    /**
+     * Frequenza da usare verso il DAC per un file a [r] Hz (stereo 16 bit): [r] stesso se accettata,
+     * altrimenti la più vicina nella stessa famiglia se il ricampionamento è attivo. 0 = non utilizzabile.
+     */
+    fun pickRate(r: Int, allowResample: Boolean): Int {
+        if (!enabled) return 0
+        if (!NativeUsb.available) { status = "Libreria nativa non disponibile"; return 0 }
         val d = device ?: findDevice().also { device = it }
-        if (d == null) { status = "Nessun DAC USB collegato"; return false }
-        if (!um.hasPermission(d)) { status = "Serve il permesso USB (riattiva l'opzione)"; return false }
+        if (d == null) { status = "Nessun DAC USB collegato"; return 0 }
+        if (!um.hasPermission(d)) { status = "Serve il permesso USB (riattiva l'opzione)"; return 0 }
         var list = parsed
         if (list == null) {
             val c = um.openDevice(d)
-            if (c == null) { status = "Impossibile aprire il DAC"; return false }
+            if (c == null) { status = "Impossibile aprire il DAC"; return 0 }
             val raw = c.rawDescriptors
             c.close()
             list = parse(raw)
             parsed = list
             AppLog.i("Audio", "USB: UAC ${"%04x".format(uacVersion)}, formati: " + list.joinToString { "if${it.iface}/alt${it.alt} ${it.channels}ch ${it.bits}bit ${it.rates}" })
         }
-        if (uacVersion >= 0x0200) { status = "DAC UAC2: non ancora supportato (uso Android)"; return false }
-        if (list.isEmpty()) { status = "Descrittori audio non riconosciuti (uso Android)"; return false }
-        if (chooseAlt(list, r) == null) {
-            val all = list.flatMap { it.rates }.distinct().sorted()
+        if (uacVersion >= 0x0200) { status = "DAC UAC2: non ancora supportato (uso Android)"; return 0 }
+        if (list.isEmpty()) { status = "Descrittori audio non riconosciuti (uso Android)"; return 0 }
+        if (chooseAlt(list, r) != null) return r
+        val usable = list.filter { it.channels == 2 && it.subframe == 2 && it.bits == 16 }
+        val candidates = (usable.flatMap { it.rates } +
+            listOf(44100, 48000, 88200, 96000, 176400, 192000).filter { x -> usable.any { it.supports(x) } })
+            .distinct().sorted()
+        if (!allowResample || candidates.isEmpty()) {
             status = "Il DAC non accetta ${r / 1000.0} kHz stereo 16 bit (accetta: " +
-                all.joinToString { "${it / 1000.0}" } + " kHz) · uso Android"
-            return false
+                candidates.joinToString { "${it / 1000.0}" } + " kHz) · uso Android"
+            return 0
         }
-        return true
+        val fam44 = r % 44100 == 0
+        val sameFamily = candidates.filter { (it % 44100 == 0) == fam44 && (it % 48000 == 0) == !fam44 }
+        val pick = sameFamily.lastOrNull { it <= r }
+            ?: candidates.lastOrNull { it <= r }
+            ?: candidates.first()
+        return pick
     }
 
-    fun open(r: Int): Boolean {
+    fun open(r: Int, fromRate: Int = r): Boolean {
         closeOutput()
         val d = device ?: return false
         val a = chooseAlt(parsed ?: return false, r) ?: return false
@@ -233,7 +249,8 @@ class UsbAudioController(private val ctx: Context) {
             c.close(); status = "Apertura USB fallita (uso Android)"; return false
         }
         conn = c; claimed = target; handle = h; rate = r; restarts = 0
-        status = "USB esclusivo attivo: ${r / 1000.0} kHz · 16 bit · stereo"
+        status = if (fromRate != r) "USB esclusivo attivo: ${fromRate / 1000.0} → ${r / 1000.0} kHz (ricampionato) · 16 bit · stereo"
+        else "USB esclusivo attivo: ${r / 1000.0} kHz · 16 bit · stereo"
         AppLog.i("Audio", "USB: $status (ep=0x${a.ep.toString(16)}, intervallo ${intervalUs} µs, pacchetto max ${a.maxPacket})")
         return true
     }

@@ -48,6 +48,11 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     @Volatile
     var usbMode: Boolean = false
 
+    /** Frequenza di uscita se diversa da quella d'ingresso (ricampionamento), 0 = nessuno. */
+    @Volatile
+    var targetRate: Int = 0
+    private var outRate = 0
+
     @Volatile
     var info: DspInfo = DspInfo()
         private set
@@ -87,13 +92,15 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         sampleRate = inputAudioFormat.sampleRate
         channels = inputAudioFormat.channelCount
         encoding = enc
-        analyzer.sampleRate = sampleRate
         outEnc = when (if (usbMode) 16 else outputBits) {
             16 -> NativeDsp.ENC_16
             24 -> NativeDsp.ENC_FLOAT24
             else -> NativeDsp.ENC_FLOAT
         }
         dsp.configure(sampleRate, channels)
+        outRate = if (targetRate > 0 && targetRate != sampleRate) targetRate else sampleRate
+        dsp.setResample(if (outRate != sampleRate) outRate else 0)
+        analyzer.sampleRate = outRate
         info = DspInfo(
             sampleRate = sampleRate, channels = channels,
             inEncoding = encName(inEnc), outEncoding = encName(outEnc),
@@ -102,7 +109,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         AppLog.i("Audio", "DSP configurato: ${encName(inEnc)}, $sampleRate Hz, $channels can. -> ${encName(outEnc)}")
         appliedVersion = -1
         val outC = if (outEnc == NativeDsp.ENC_16) C.ENCODING_PCM_16BIT else C.ENCODING_PCM_FLOAT
-        return AudioProcessor.AudioFormat(sampleRate, channels, outC)
+        return AudioProcessor.AudioFormat(outRate, channels, outC)
     }
 
     override fun onFlush() {
@@ -197,14 +204,14 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
             return
         }
         val inBytes = frames * bps * channels
-        val outBytes = frames * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4)
+        val outBps = if (outEnc == NativeDsp.ENC_16) 2 else 4
         val (src, off) = directInput(inputBuffer, inBytes)
-        val out = replaceOutputBuffer(outBytes)
-        dsp.process(src, off, inEnc, frames, out, outEnc, bypass)
-        out.position(outBytes)
+        val out = replaceOutputBuffer(dsp.maxOut(frames) * channels * outBps)
+        val outFrames = dsp.process(src, off, inEnc, frames, out, outEnc, bypass)
+        out.position(outFrames * channels * outBps)
         out.flip()
 
-        if (analyzer.enabled) tap(out, frames)
+        if (analyzer.enabled) tap(out, outFrames)
 
         inputBuffer.position(inputBuffer.position() + inBytes)
     }
@@ -229,13 +236,13 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     }
 
     override fun onQueueEndOfStream() {
-        if (!limiterOn) return
-        val frames = dsp.latencyFrames()
-        if (frames <= 0) return
-        val outBytes = frames * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4)
-        val out = replaceOutputBuffer(outBytes)
-        val n = dsp.flush(out, outEnc, frames)
-        out.position(n * channels * (if (outEnc == NativeDsp.ENC_16) 2 else 4))
+        val resampling = outRate != sampleRate
+        if (!limiterOn && !resampling) return
+        val outBps = if (outEnc == NativeDsp.ENC_16) 2 else 4
+        val cap = dsp.maxOut(dsp.flushIn() * 2) + 16
+        val out = replaceOutputBuffer(cap * channels * outBps)
+        val n = dsp.flush(out, outEnc, cap)
+        out.position(n * channels * outBps)
         out.flip()
     }
 

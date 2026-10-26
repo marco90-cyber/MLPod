@@ -72,6 +72,11 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
+    fun setUsbResample(on: Boolean) {
+        settings.usbResample = on
+        usb.resample = on
+    }
+
     fun setUsbExclusive(on: Boolean) {
         settings.usbExclusive = on
         usb.enabled = on
@@ -100,6 +105,7 @@ class AudioEngine(
         eqProcessor.outputBits = settings.outputBits
         dac.enabled = settings.dacMode
         usb.enabled = settings.usbExclusive
+        usb.resample = settings.usbResample
         val factory = object : DefaultRenderersFactory(app) {
             override fun buildAudioSink(
                 context: Context,

@@ -307,6 +307,11 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
             sub = "Come USB Exclusive di Poweramp · 16 bit stereo · dal prossimo brano"
         ) { engine.setUsbExclusive(!settings.usbExclusive) },
         MenuItem(
+            "Ricampionamento USB",
+            value = if (settings.usbResample) "Sì" else "No",
+            sub = "Se il DAC non accetta la frequenza del file (es. 96 kHz) la converto io · dal prossimo brano"
+        ) { engine.setUsbResample(!settings.usbResample) },
+        MenuItem(
             "Modalità DAC USB",
             value = if (settings.dacMode) "Sì" else "No",
             sub = "Bit-perfect, Android 14+ · dal prossimo brano"

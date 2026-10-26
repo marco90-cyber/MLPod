@@ -104,6 +104,8 @@ class Settings(context: Context) {
     var dacMode by BoolPref(sp, "dac_mode", false)
     /** Uscita USB esclusiva (driver diretto) */
     var usbExclusive by BoolPref(sp, "usb_exclusive", false)
+    /** Ricampionamento nell'app per l'uscita USB diretta */
+    var usbResample by BoolPref(sp, "usb_resample", true)
     var hiResOutput by BoolPref(sp, "hires_output", true)
     var volume by FloatPref(sp, "volume", 1f)
 
