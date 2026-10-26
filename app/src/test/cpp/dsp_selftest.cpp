@@ -160,17 +160,18 @@ static void testResample() {
         const int frames = 96000;
         std::vector<float> in(frames * 2);
         for (int i = 0; i < frames; i++) in[2 * i] = in[2 * i + 1] = 0.5f * (float)std::sin(2 * kPi * f * i / 96000.0);
-        std::vector<int16_t> out(e.maxOutFrames(frames) * 2 + 4096);
+        std::vector<int16_t> out((e.maxOutFrames(frames) + 16384) * 2);
         int total = 0;
         for (int pos = 0; pos < frames; pos += 4096) {
             const int n = std::min(4096, frames - pos);
             total += e.process(reinterpret_cast<uint8_t*>(&in[2 * pos]), kEncFloat, n,
                                reinterpret_cast<uint8_t*>(&out[2 * total]), kEncPcm16, false);
         }
+        total += e.flush(reinterpret_cast<uint8_t*>(&out[2 * total]), kEncPcm16, 8192);
         out.resize(2 * total);
         const double r = rmsOf(out, 4000);
         if (pass == 0) {
-            CHECK(std::abs(total - 48000) <= 4, "ricampionamento 96->48: numero di campioni corretto");
+            CHECK(std::abs(total - 48000) <= 4, "ricampionamento 96->48: numero di campioni corretto (con coda)");
             CHECK(std::abs(20 * std::log10(r / (0.5 / std::sqrt(2.0)))) < 0.05, "ricampionamento: livello 1 kHz invariato (<0,05 dB)");
         } else {
             CHECK(20 * std::log10(r + 1e-12) < -80.0, "ricampionamento: alias a 30 kHz sotto -80 dB");

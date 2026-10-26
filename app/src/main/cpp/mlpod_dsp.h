@@ -233,7 +233,7 @@ public:
         const size_t cap = static_cast<size_t>(rs_.maxOut(fin + rs_.taps()) + rs_.maxOut(rs_.taps())) * ch_;
         if (rsOut_.size() < cap) rsOut_.resize(cap);
         int m = fin > 0 ? rs_.process(scratch_.data(), fin, rsOut_.data()) : 0;
-        m += rs_.flushTail(rsOut_.data() + static_cast<size_t>(m) * ch_);
+        m += rs_.flushTail(rsOut_.data() + static_cast<size_t>(m) * ch_, static_cast<int>(cap / ch_) - m);
         m = std::min(m, maxFrames);
         encode(out, outEnc, rsOut_.data(), static_cast<size_t>(m) * ch_, true);
         return m;
