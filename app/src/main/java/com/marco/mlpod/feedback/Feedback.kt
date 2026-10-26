@@ -65,6 +65,21 @@ class Feedback(context: Context, private val settings: Settings) {
         if (settings.soundScreen) click()
     }
 
+    /** "Scatto" di centraggio (zero dello slider/manopola): vibrazione più lunga e netta. */
+    fun detent() {
+        if (settings.hapticScreen) {
+            val v = vibrator
+            if (v != null && v.hasVibrator()) {
+                try {
+                    v.vibrate(VibrationEffect.createOneShot(45, VibrationEffect.DEFAULT_AMPLITUDE))
+                } catch (e: Throwable) {
+                    AppLog.d("Feedback", "Vibrazione non riuscita: ${e.message}")
+                }
+            }
+        }
+        if (settings.soundScreen) click()
+    }
+
     fun wheelStep() {
         if (settings.hapticWheel) tick()
         if (settings.soundWheel) click()

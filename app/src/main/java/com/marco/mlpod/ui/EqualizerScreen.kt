@@ -167,6 +167,7 @@ fun EqualizerScreen(env: AppEnv) {
                     modifier = Modifier.fillMaxSize(),
                     onChange = { v -> settings.updateEq { it.copy(preampDb = v) } },
                     onReset = { settings.updateEq { it.copy(preampDb = 0f) } },
+                    onDetent = { env.feedback.detent() },
                     onLabelClick = null,
                 )
             }
@@ -192,6 +193,7 @@ fun EqualizerScreen(env: AppEnv) {
                             modifier = Modifier.width(colW),
                             onChange = { v -> settings.updateEq { it.withGain(i, v) } },
                             onReset = { settings.updateEq { it.withGain(i, 0f) } },
+                            onDetent = { env.feedback.detent() },
                             onLabelClick = { target = FreqTarget.Band(i) },
                         )
                     }
@@ -546,12 +548,14 @@ private fun TonePanel(env: AppEnv, eq: EqConfig, onFreq: (FreqTarget) -> Unit) {
         ToneKnob(
             title = "Bassi", percent = eq.bassPercent, freq = eq.bassFreq, color = BassColor,
             onTick = { env.feedback.tapScreen() },
+            onDetent = { env.feedback.detent() },
             onChange = { v -> settings.updateEq { it.copy(bassPercent = v) } },
             onFreqClick = { onFreq(FreqTarget.Bass) },
         )
         ToneKnob(
             title = "Alti", percent = eq.treblePercent, freq = eq.trebleFreq, color = Accent,
             onTick = { env.feedback.tapScreen() },
+            onDetent = { env.feedback.detent() },
             onChange = { v -> settings.updateEq { it.copy(treblePercent = v) } },
             onFreqClick = { onFreq(FreqTarget.Treble) },
         )
@@ -651,6 +655,7 @@ private fun ToneKnob(
     freq: Float,
     color: Color,
     onTick: () -> Unit,
+    onDetent: () -> Unit,
     onChange: (Int) -> Unit,
     onFreqClick: () -> Unit,
 ) {
@@ -661,7 +666,7 @@ private fun ToneKnob(
             color = Color(0xFF9AA0AA), fontSize = 14.sp
         )
         Spacer(Modifier.height(6.dp))
-        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onChange = onChange)
+        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onDetent = onDetent, onChange = onChange)
         Spacer(Modifier.height(6.dp))
         Box(
             Modifier
@@ -683,12 +688,13 @@ private fun BandColumn(
     modifier: Modifier,
     onChange: (Float) -> Unit,
     onReset: () -> Unit,
+    onDetent: () -> Unit,
     onLabelClick: (() -> Unit)?,
 ) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         VerticalGainSlider(
             value = value, range = EqConfig.GAIN_RANGE, color = color,
-            onChange = onChange, onReset = onReset,
+            onChange = onChange, onReset = onReset, onDetent = onDetent,
             modifier = Modifier.weight(1f).fillMaxWidth()
         )
         val labelMod = if (onLabelClick != null) {
@@ -712,16 +718,30 @@ private fun VerticalGainSlider(
     color: Color,
     onChange: (Float) -> Unit,
     onReset: () -> Unit,
+    onDetent: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val change = rememberUpdatedState(onChange)
     val reset = rememberUpdatedState(onReset)
+    val detent = rememberUpdatedState(onDetent)
+    val cur = rememberUpdatedState(value)
 
+    // calamita sullo zero: entro +-0,6 dB il valore si aggancia a 0 e vibra più a lungo
     fun valueAt(y: Float, h: Float, pad: Float): Float {
         val usable = (h - 2 * pad).coerceAtLeast(1f)
         val frac = ((y - pad) / usable).coerceIn(0f, 1f)
         val v = range - frac * 2f * range
-        return (v * 10f).roundToInt() / 10f
+        val r = (v * 10f).roundToInt() / 10f
+        return if (abs(r) <= 0.6f) 0f else r
+    }
+
+    val atZero = remember { booleanArrayOf(value == 0f) }
+    androidx.compose.runtime.SideEffect { atZero[0] = cur.value == 0f }
+
+    fun emit(v: Float) {
+        if (v == 0f && !atZero[0]) detent.value()
+        atZero[0] = v == 0f
+        change.value(v)
     }
 
     Canvas(
@@ -729,13 +749,13 @@ private fun VerticalGainSlider(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = { reset.value() },
-                    onTap = { o -> change.value(valueAt(o.y, this.size.height.toFloat(), 20.dp.toPx())) }
+                    onTap = { o -> emit(valueAt(o.y, this.size.height.toFloat(), 20.dp.toPx())) }
                 )
             }
             .pointerInput(Unit) {
                 detectDragGestures { c, _ ->
                     c.consume()
-                    change.value(valueAt(c.position.y, this.size.height.toFloat(), 20.dp.toPx()))
+                    emit(valueAt(c.position.y, this.size.height.toFloat(), 20.dp.toPx()))
                 }
             }
     ) {

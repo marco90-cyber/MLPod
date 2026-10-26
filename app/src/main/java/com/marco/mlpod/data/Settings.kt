@@ -66,6 +66,9 @@ class Settings(context: Context) {
     var coverInMenu by BoolPref(sp, "cover_in_menu", true)
     var keepScreenOn by BoolPref(sp, "keep_screen_on", false)
 
+    /** Sensibilità dell'analizzatore (offset di visualizzazione in dB, -24..+24) */
+    var analyzerSens by IntPref(sp, "analyzer_sens", 0)
+
     // Suoni e tatto
     var hapticScreen by BoolPref(sp, "haptic_screen", true)
     var soundScreen by BoolPref(sp, "sound_screen", true)

@@ -195,6 +195,18 @@ class AudioEngine(
 
             override fun onPlayerError(error: PlaybackException) {
                 AppLog.e("Audio", "Errore di riproduzione: ${error.errorCodeName}", error)
+                val sinkError = error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
+                if (sinkError && settings.adaptiveOutput && !outputMonitor.safeMode) {
+                    // il dispositivo ha rifiutato il formato scelto: riprovo con 16 bit a 44,1/48 kHz
+                    outputMonitor.safeMode = true
+                    AppLog.w("Audio", "Uscita rifiutata dal dispositivo: riprovo in modalità prudente (16 bit, 44,1/48 kHz)")
+                    val pos = player.currentPosition
+                    player.prepare()
+                    player.seekTo(pos)
+                    player.play()
+                    return
+                }
                 consecutiveErrors++
                 val bad = currentTrack
                 if (bad != null) AppLog.w("Audio", "Brano non riproducibile: ${bad.title} (${bad.formatLabel})")

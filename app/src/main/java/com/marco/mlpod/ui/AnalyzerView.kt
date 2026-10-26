@@ -2,6 +2,7 @@ package com.marco.mlpod.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,6 +71,9 @@ private const val FLOOR = -90f
 private const val NB = 31
 private const val NFFT = 8192
 private const val NG = 256
+private const val PUB_EVERY = 8       // numeri aggiornati ogni ~0,26 s
+private const val HOLD_FRAMES = 60    // tenuta dei massimi (~2 s)
+private const val FALL_NUM = 0.25f    // discesa automatica dei massimi (dB per aggiornamento)
 
 private fun toDb(v: Float): Float = if (v <= 1e-5f) FLOOR else max(FLOOR, 20f * log10(v))
 
@@ -93,6 +98,18 @@ private class AnalyzerState {
     var txtPpm0 by mutableStateOf("")
     var txtPpm1 by mutableStateOf("")
     var buffers by mutableStateOf("")
+
+    // finestra per i numeri: aggiornati ~4 volte al secondo (picco vero = massimo, RMS = media di potenza)
+    private val wTp = FloatArray(2) { FLOOR }
+    private val wRms = DoubleArray(2)
+    private var wN = 0
+    private var pubCnt = 0
+    private val tpMaxT = IntArray(2)
+    private val rmsMaxT = IntArray(2)
+    private val ppmMaxT = IntArray(2)
+    private val bandPeakT = IntArray(NB)
+    var rmsShown = FloatArray(2) { FLOOR }
+    var tpShown = FloatArray(2) { FLOOR }
 
     val barDb = FloatArray(2) { FLOOR }
     val barHold = FloatArray(2) { FLOOR }
@@ -130,12 +147,22 @@ private class AnalyzerState {
 
     fun update(an: Analyzer, sel: Int) {
         step(an)
-        publishTexts(an, sel)
+        if (++pubCnt >= PUB_EVERY) {
+            pubCnt = 0
+            for (c in 0..1) {
+                tpShown[c] = wTp[c]
+                rmsShown[c] = if (wN > 0 && wRms[c] > 0.0) toDb(sqrt(wRms[c] / wN).toFloat()) else FLOOR
+                wTp[c] = FLOOR
+                wRms[c] = 0.0
+            }
+            wN = 0
+            publishTexts(an, sel)
+        }
     }
 
     private fun publishTexts(an: Analyzer, sel: Int) {
-        txtPeak = "PICCO VERO   L ${fdb(tpCur[0])}/${fdb(tpMax[0])}  R ${fdb(tpCur[1])}/${fdb(tpMax[1])}"
-        txtRms = "RMS          L ${fdb(rmsCur[0])}/${fdb(rmsMax[0])}  R ${fdb(rmsCur[1])}/${fdb(rmsMax[1])}"
+        txtPeak = "PICCO VERO   L ${fdb(tpShown[0])}/${fdb(tpMax[0])}  R ${fdb(tpShown[1])}/${fdb(tpMax[1])}"
+        txtRms = "RMS          L ${fdb(rmsShown[0])}/${fdb(rmsMax[0])}  R ${fdb(rmsShown[1])}/${fdb(rmsMax[1])}"
         txtPhase = "Fase " + String.format(Locale.ITALY, "%+.2f", corr)
         val b = sel.coerceIn(0, NB - 1)
         txtBand = "1/3 ott. ${fmtHz(bandFreq(b))}"
@@ -154,7 +181,10 @@ private class AnalyzerState {
         for (c in 0..1) {
             val p = if (active) toDb(pk[c]) else FLOOR
             tpCur[c] = p
-            if (p > tpMax[c]) tpMax[c] = p
+            if (p > wTp[c]) wTp[c] = p
+            // massimo: tenuta ~2 s, poi scende da solo
+            if (p >= tpMax[c]) { tpMax[c] = p; tpMaxT[c] = 0 }
+            else if (++tpMaxT[c] > HOLD_FRAMES) tpMax[c] = max(FLOOR, tpMax[c] - FALL_NUM)
             barDb[c] = if (p > barDb[c]) p else max(p, barDb[c] - 1.6f)
             if (barDb[c] >= barHold[c]) {
                 barHold[c] = barDb[c]; barHoldT[c] = 0
@@ -163,11 +193,16 @@ private class AnalyzerState {
             }
             // PPM: attacco rapido, ritorno lento
             ppm[c] = if (p > ppm[c]) ppm[c] + (p - ppm[c]) * 0.6f else max(p, ppm[c] - 0.45f)
-            if (ppm[c] > ppmMax[c]) ppmMax[c] = ppm[c]
+            if (ppm[c] >= ppmMax[c]) { ppmMax[c] = ppm[c]; ppmMaxT[c] = 0 }
+            else if (++ppmMaxT[c] > HOLD_FRAMES) ppmMax[c] = max(FLOOR, ppmMax[c] - FALL_NUM)
         }
 
         if (!active) {
-            for (c in 0..1) rmsCur[c] = FLOOR
+            for (c in 0..1) {
+                rmsCur[c] = FLOOR
+                if (++rmsMaxT[c] > HOLD_FRAMES) rmsMax[c] = max(FLOOR, rmsMax[c] - FALL_NUM)
+            }
+            wN++
             gCount = 0
             for (i in 0 until NB) bands[i] = max(FLOOR, bands[i] - 2f)
             return
@@ -188,7 +223,13 @@ private class AnalyzerState {
         val rl = sqrt(sl / 2048.0).toFloat()
         val rr = sqrt(sr / 2048.0).toFloat()
         rmsCur[0] = toDb(rl); rmsCur[1] = toDb(rr)
-        for (c in 0..1) if (rmsCur[c] > rmsMax[c]) rmsMax[c] = rmsCur[c]
+        wRms[0] += sl / 2048.0
+        wRms[1] += sr / 2048.0
+        wN++
+        for (c in 0..1) {
+            if (rmsCur[c] >= rmsMax[c]) { rmsMax[c] = rmsCur[c]; rmsMaxT[c] = 0 }
+            else if (++rmsMaxT[c] > HOLD_FRAMES) rmsMax[c] = max(FLOOR, rmsMax[c] - FALL_NUM)
+        }
         val cc = (slr / sqrt(sl * sr + 1e-12)).toFloat().coerceIn(-1f, 1f)
         corr += (cc - corr) * 0.25f
 
@@ -225,10 +266,14 @@ private class AnalyzerState {
             for (b in lo..hi) p += re[b] * re[b] + im[b] * im[b]
             val db = if (fc > an.sampleRate / 2.1f) FLOOR else toDb(sqrt(p * norm))
             bands[i] = if (db > bands[i]) db else max(db, bands[i] - 1.3f)
-            if (bands[i] > bandPeak[i]) bandPeak[i] = bands[i]
+            if (bands[i] >= bandPeak[i]) { bandPeak[i] = bands[i]; bandPeakT[i] = 0 }
+            else if (++bandPeakT[i] > 45) bandPeak[i] = max(FLOOR, bandPeak[i] - 0.5f)
         }
     }
 }
+
+/** Sensibilità: sposta solo la visualizzazione (i numeri restano i valori veri). */
+private fun adj(db: Float, sens: Float): Float = if (db <= -89f) FLOOR else db + sens
 
 private fun dbFrac(db: Float, min: Float = -60f): Float = ((db - min) / -min).coerceIn(0f, 1f)
 
@@ -258,18 +303,19 @@ fun AnalyzerView(env: AppEnv) {
             .background(AnBg)
             .padding(horizontal = 6.dp, vertical = 4.dp)
     ) {
-        LevelSection(st, frame)
+        val sens = env.settings.analyzerSens.toFloat()
+        LevelSection(st, frame, sens)
         Spacer(Modifier.height(4.dp))
         Row(
             Modifier.fillMaxWidth().height(118.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            GonioPanel(st, frame, Modifier.weight(1f))
-            PpmDial("L", st.ppm[0], st.ppmMax[0], st.txtPpm0, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
-            PpmDial("R", st.ppm[1], st.ppmMax[1], st.txtPpm1, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
+            GonioPanel(st, frame, sens, Modifier.weight(1f))
+            PpmDial("L", adj(st.ppm[0], sens), adj(st.ppmMax[0], sens), st.txtPpm0, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
+            PpmDial("R", adj(st.ppm[1], sens), adj(st.ppmMax[1], sens), st.txtPpm1, env.settings.meterRef.toFloat(), Modifier.weight(0.9f))
         }
         Spacer(Modifier.height(4.dp))
-        RtaPanel(env, st, frame, Modifier.weight(1f))
+        RtaPanel(env, st, frame, sens, Modifier.weight(1f))
     }
 }
 
@@ -279,7 +325,7 @@ private fun Mono(text: String, color: Color = AnText, size: Int = 10, modifier: 
 }
 
 @Composable
-private fun LevelSection(st: AnalyzerState, frame: Int) {
+private fun LevelSection(st: AnalyzerState, frame: Int, sens: Float) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -297,8 +343,8 @@ private fun LevelSection(st: AnalyzerState, frame: Int) {
                     val brush = Brush.horizontalGradient(
                         0f to AnGreen, 0.7f to AnYellow, 1f to AnRed, startX = 0f, endX = w
                     )
-                    drawRect(brush, size = Size(w * dbFrac(st.barDb[c]), size.height))
-                    val hx = w * dbFrac(st.barHold[c])
+                    drawRect(brush, size = Size(w * dbFrac(adj(st.barDb[c], sens)), size.height))
+                    val hx = w * dbFrac(adj(st.barHold[c], sens))
                     drawRect(Color.White, topLeft = Offset(max(0f, hx - 2f), 0f), size = Size(2f, size.height))
                     for (m in listOf(-48f, -36f, -24f, -12f, -6f)) {
                         val x = w * dbFrac(m)
@@ -316,7 +362,7 @@ private fun LevelSection(st: AnalyzerState, frame: Int) {
 }
 
 @Composable
-private fun GonioPanel(st: AnalyzerState, frame: Int, modifier: Modifier) {
+private fun GonioPanel(st: AnalyzerState, frame: Int, sens: Float, modifier: Modifier) {
     Column(
         modifier
             .clip(RoundedCornerShape(8.dp))
@@ -336,9 +382,10 @@ private fun GonioPanel(st: AnalyzerState, frame: Int, modifier: Modifier) {
                 drawLine(Color(0xFF30333B), Offset(cx - rad * 0.7f, cy - rad * 0.7f), Offset(cx + rad * 0.7f, cy + rad * 0.7f), 1f)
                 drawLine(Color(0xFF30333B), Offset(cx + rad * 0.7f, cy - rad * 0.7f), Offset(cx - rad * 0.7f, cy + rad * 0.7f), 1f)
                 val col = Color(0x9900E5FF)
+                val zoom = 1.15f * 10f.pow(sens / 20f)
                 for (k in 0 until st.gCount) {
-                    val x = cx + (st.gx[k] * rad * 1.15f).coerceIn(-rad, rad)
-                    val y = cy - (st.gy[k] * rad * 1.15f).coerceIn(-rad, rad)
+                    val x = cx + (st.gx[k] * rad * zoom).coerceIn(-rad, rad)
+                    val y = cy - (st.gy[k] * rad * zoom).coerceIn(-rad, rad)
                     drawCircle(col, 1.3f, Offset(x, y))
                 }
             }
@@ -437,7 +484,22 @@ private fun PpmDial(label: String, value: Float, max: Float, text: String, ref: 
 }
 
 @Composable
-private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, modifier: Modifier) {
+private fun SensButton(label: String, align: Alignment, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF1E2127))
+            .border(1.dp, AnCyan.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = align
+    ) {
+        Text(label, color = AnCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, sens: Float, modifier: Modifier) {
     val sel = env.analyzerBand.coerceIn(0, NB - 1)
     Column(
         modifier
@@ -472,15 +534,16 @@ private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, modifier: Modif
             }
             for (i in 0 until NB) {
                 val x = i * bw
-                val top = y(st.bands[i])
-                val frac = ((st.bands[i] - minDb) / -minDb).coerceIn(0f, 1f)
+                val bAdj = adj(st.bands[i], sens)
+                val top = y(bAdj)
+                val frac = ((bAdj - minDb) / -minDb).coerceIn(0f, 1f)
                 val col = when {
                     frac > 0.9f -> AnRed
                     frac > 0.7f -> AnYellow
                     else -> AnGreen
                 }
                 drawRect(col, Offset(x + 1.5f, top), Size(bw - 3f, h - top))
-                val pyy = y(st.bandPeak[i])
+                val pyy = y(adj(st.bandPeak[i], sens))
                 drawRect(Color.White, Offset(x + 1.5f, pyy), Size(bw - 3f, 2f))
             }
             drawRect(
@@ -499,17 +562,20 @@ private fun RtaPanel(env: AppEnv, st: AnalyzerState, frame: Int, modifier: Modif
                 Mono(st.txtBand, AnCyan, 11)
                 Mono(st.txtBandVal, Color.White, 11)
             }
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF2F6FD6))
-                    .clickable {
-                        env.feedback.tapScreen()
-                        env.analyzerResetToken++
-                    }
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Text("Azzera picchi", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            SensButton("−", Alignment.Center) {
+                env.feedback.tapScreen()
+                env.settings.analyzerSens = (env.settings.analyzerSens - 3).coerceAtLeast(-24)
+            }
+            Column(Modifier.padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Mono("SENS", AnText, 9)
+                Mono(
+                    String.format(Locale.ITALY, "%+d dB", env.settings.analyzerSens),
+                    AnCyan, 12
+                )
+            }
+            SensButton("+", Alignment.Center) {
+                env.feedback.tapScreen()
+                env.settings.analyzerSens = (env.settings.analyzerSens + 3).coerceAtMost(24)
             }
         }
     }

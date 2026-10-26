@@ -36,11 +36,13 @@ fun Knob(
     size: Dp,
     modifier: Modifier = Modifier,
     onTick: () -> Unit = {},
+    onDetent: () -> Unit = {},
     onChange: (Int) -> Unit,
 ) {
     val current = rememberUpdatedState(value)
     val change = rememberUpdatedState(onChange)
     val tick = rememberUpdatedState(onTick)
+    val detent = rememberUpdatedState(onDetent)
     var lastStep by remember { mutableIntStateOf(value / 5) }
 
     Canvas(
@@ -49,14 +51,17 @@ fun Knob(
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { o ->
-                        val v = valueAt(o, Offset(this.size.width / 2f, this.size.height / 2f))
+                        val v = magnet(valueAt(o, Offset(this.size.width / 2f, this.size.height / 2f)))
                         change.value(v)
                     },
                     onDrag = { c, _ ->
                         c.consume()
-                        val v = valueAt(c.position, Offset(this.size.width / 2f, this.size.height / 2f))
+                        val v = magnet(valueAt(c.position, Offset(this.size.width / 2f, this.size.height / 2f)))
                         if (v != current.value) {
-                            if (v / 5 != lastStep) {
+                            if (v == CENTER) {
+                                lastStep = v / 5
+                                detent.value()
+                            } else if (v / 5 != lastStep) {
                                 lastStep = v / 5
                                 tick.value()
                             }
@@ -103,6 +108,12 @@ fun Knob(
         )
     }
 }
+
+private const val CENTER = 50
+private const val MAGNET = 3
+
+/** Calamita sullo zero: vicino al centro il valore si aggancia a 50. */
+private fun magnet(v: Int): Int = if (kotlin.math.abs(v - CENTER) <= MAGNET) CENTER else v
 
 private const val START = 135f
 private const val SWEEP = 270f

@@ -34,6 +34,11 @@ class OutputMonitor(context: Context) {
         private set
 
     private var device: AudioDeviceInfo? = null
+    private var lastSig = ""
+
+    /** Dopo un errore di apertura dell'uscita con questo dispositivo: formato prudente. */
+    @Volatile
+    var safeMode = false
 
     /** Ultima scelta di uscita (testo per la schermata Uscita audio). */
     var lastPlan by mutableStateOf("In attesa di un brano")
@@ -52,6 +57,11 @@ class OutputMonitor(context: Context) {
      */
     fun plan(fileRate: Int): Plan {
         refresh()
+        if (safeMode) {
+            // modalità prudente (dopo un errore con questo dispositivo): 16 bit a 44,1 o 48 kHz
+            val r = if (fileRate == 44100 || fileRate == 48000) fileRate else if (fileRate % 44100 == 0) 44100 else 48000
+            return Plan(r, 16)
+        }
         val d = device
         val rates = d?.sampleRates?.filter { it > 0 }?.sorted().orEmpty()
         val encs = d?.encodings?.toList().orEmpty()
@@ -99,6 +109,18 @@ class OutputMonitor(context: Context) {
             dev = outs.minByOrNull { priority(kindOf(it.type)) }
         }
         device = dev
+        val sig = "${dev?.type}:${dev?.productName}"
+        if (sig != lastSig) {
+            lastSig = sig
+            safeMode = false
+            if (dev != null) {
+                com.marco.mlpod.util.AppLog.i(
+                    "Audio",
+                    "Uscita attiva: ${dev.productName} (tipo ${dev.type}); frequenze=${dev.sampleRates.sorted()}; " +
+                        "codifiche=${dev.encodings.sorted()}; canali=${dev.channelCounts.sorted()}"
+                )
+            }
+        }
         kind = dev?.let { kindOf(it.type) } ?: OutKind.Speaker
         name = dev?.productName?.toString().orEmpty()
         exact = ex
