@@ -32,7 +32,11 @@ jobs:
 
       - name: Test nativi del motore DSP (g++ sul runner)
         run: |
-          g++ -std=c++17 -O2 -Wall app/src/test/cpp/dsp_selftest.cpp -o dsp_selftest
+          S=app/src/main/cpp/soxr
+          for f in soxr data-io dbesi0 filter fft4g64 fft4g32 cr cr32 cr64; do
+            gcc -O2 -w -DSOXR_LIB -DNDEBUG -I$S -c $S/$f.c -o /tmp/soxr_$f.o
+          done
+          g++ -std=c++17 -O2 -Wall app/src/test/cpp/dsp_selftest.cpp /tmp/soxr_*.o -lm -o dsp_selftest
           ./dsp_selftest
 
       - name: Test unitari Kotlin
