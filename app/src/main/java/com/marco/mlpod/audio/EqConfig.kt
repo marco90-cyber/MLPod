@@ -111,11 +111,20 @@ data class EqConfig(
         enabled || bassPercent != 0 || treblePercent != 0
 
     /** Risposta in dB a una certa frequenza (per il grafico). */
-    fun responseDb(f: Double, fs: Double = 48000.0): Double {
+    fun responseDb(f: Double, fs: Double = 48000.0, includeTone: Boolean = true): Double {
         var total = 0.0
         for (c in EqMath.stages(this, fs)) total += EqMath.magnitudeDb(c, fs, f)
         if (enabled) total += preampDb - (if (autoHeadroom) boostPeakDb(fs) else 0.0)
+        if (!includeTone) total -= toneResponseDb(f, fs)
         return total
+    }
+
+    /** Solo il contributo delle manopole Bassi/Alti (il Tono è separato dall'equalizzatore). */
+    fun toneResponseDb(f: Double, fs: Double = 48000.0): Double {
+        var t = 0.0
+        if (bassPercent != 0) t += EqMath.magnitudeDb(EqMath.lowShelf(fs, bassFreq.toDouble(), EqMath.toneDb(bassPercent)), fs, f)
+        if (treblePercent != 0) t += EqMath.magnitudeDb(EqMath.highShelf(fs, trebleFreq.toDouble(), EqMath.toneDb(treblePercent)), fs, f)
+        return t
     }
 
     fun toJson(): String {

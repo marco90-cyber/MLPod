@@ -709,7 +709,7 @@ private fun ToneKnob(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(
-            String.format(Locale.ITALY, "%+.1f dB", EqMath.toneDb(percent)),
+            "$percent%  (+" + String.format(Locale.ITALY, "%.1f", EqMath.toneDb(percent)) + " dB)",
             color = Color(0xFF9AA0AA), fontSize = 14.sp
         )
         Spacer(Modifier.height(6.dp))
@@ -930,8 +930,26 @@ private fun ResponseGraph(eq: EqConfig, scroll: ScrollState, viewW: Int, modifie
             val t = i / (points - 1.0)
             val f = 20.0 * 1000.0.pow(t)
             val x = (t * w).toFloat()
-            val y = yOf(eq.responseDb(f).toFloat())
+            val y = yOf(eq.responseDb(f, includeTone = false).toFloat())
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        // Tono (Bassi/Alti): curva separata, riempita, come in Poweramp
+        if (eq.bassPercent != 0 || eq.treblePercent != 0) {
+            val tp = Path()
+            val y0 = yOf(0f)
+            tp.moveTo(0f, y0)
+            val line = Path()
+            for (i in 0 until points) {
+                val t = i / (points - 1.0)
+                val f = 20.0 * 1000.0.pow(t)
+                val x = (t * w).toFloat()
+                val y = yOf(eq.toneResponseDb(f).toFloat())
+                tp.lineTo(x, y)
+                if (i == 0) line.moveTo(x, y) else line.lineTo(x, y)
+            }
+            tp.lineTo(w, y0); tp.close()
+            drawPath(tp, Color(0x55E8EAF0))
+            drawPath(line, Color(0xFFE8EAF0), style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round))
         }
         drawPath(path, NeonGreen, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
     }

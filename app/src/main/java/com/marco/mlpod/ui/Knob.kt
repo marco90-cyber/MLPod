@@ -86,8 +86,12 @@ fun Knob(
         // valore
         val frac = value.coerceIn(0, 100) / 100f
         if (frac > 0f) {
+            // il colore dell'anello passa da verde acqua a giallo a rosso al crescere del valore
+            val ringColor = if (frac < 0.5f)
+                androidx.compose.ui.graphics.lerp(Color(0xFF4DD6B0), Color(0xFFE6E35A), frac * 2f)
+            else androidx.compose.ui.graphics.lerp(Color(0xFFE6E35A), Color(0xFFFF5A5A), (frac - 0.5f) * 2f)
             drawArc(
-                brush = Brush.sweepGradient(listOf(color.copy(alpha = 0.55f), color, color.copy(alpha = 0.55f))),
+                color = ringColor,
                 startAngle = START, sweepAngle = SWEEP * frac, useCenter = false,
                 topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round)
             )
