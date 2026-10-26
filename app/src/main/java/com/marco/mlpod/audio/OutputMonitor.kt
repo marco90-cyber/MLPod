@@ -67,7 +67,7 @@ class OutputMonitor(context: Context) {
         }
         val wide = encs.isEmpty() || encs.any {
             it == AudioFormat.ENCODING_PCM_FLOAT || it == AudioFormat.ENCODING_PCM_32BIT ||
-                it == AudioFormat.ENCODING_PCM_24BIT_PACKED || it == AudioFormat.ENCODING_PCM_8_24BIT
+                it == AudioFormat.ENCODING_PCM_24BIT_PACKED
         }
         return Plan(target, if (wide) 32 else 16)
     }
