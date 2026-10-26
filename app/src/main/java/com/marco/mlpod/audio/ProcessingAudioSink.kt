@@ -1,6 +1,7 @@
 package com.marco.mlpod.audio
 
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.AudioProcessor
@@ -22,9 +23,14 @@ import java.nio.ByteBuffer
 class ProcessingAudioSink(
     sink: AudioSink,
     private val processor: EqAudioProcessor,
+    private val usb: UsbAudioController? = null,
 ) : ForwardingAudioSink(sink) {
 
     var onFormat: ((sampleRate: Int, channels: Int, encoding: Int) -> Unit)? = null
+    private var usbOn = false
+    private var usbEos = false
+    private var playing = false
+    private var volume = 1f
     private var active = false
     private var pending: ByteBuffer? = null
     private var pendingPts = 0L
@@ -35,6 +41,11 @@ class ProcessingAudioSink(
         active = false
         pending = null
         eosQueued = false
+        if (usbOn) { usb?.closeOutput(); usbOn = false }
+        usbEos = false
+        val wantUsb = usb != null && usb.enabled && MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType &&
+            inputFormat.channelCount == 2 && usb.canUse(inputFormat.sampleRate)
+        processor.usbMode = wantUsb
         var fmt = inputFormat
         if (MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType && inputFormat.pcmEncoding != Format.NO_VALUE) {
             try {
@@ -50,6 +61,15 @@ class ProcessingAudioSink(
                 AppLog.w("Audio", "DSP: formato non gestito: ${e.message}")
             }
         }
+        if (wantUsb && fmt.pcmEncoding == C.ENCODING_PCM_16BIT && usb != null) {
+            super.reset()
+            if (usb.open(fmt.sampleRate)) {
+                usbOn = true
+                usb.setGain(volume)
+                usb.setPaused(!playing)
+                return
+            }
+        }
         if (MimeTypes.AUDIO_RAW == fmt.sampleMimeType) {
             onFormat?.invoke(fmt.sampleRate, fmt.channelCount, fmt.pcmEncoding)
         }
@@ -57,7 +77,7 @@ class ProcessingAudioSink(
     }
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
-        if (!active) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        if (!active) return deliver(buffer, presentationTimeUs, encodedAccessUnitCount)
         if (pending == null) {
             if (!buffer.hasRemaining()) return true
             processor.queueInput(buffer)
@@ -69,7 +89,7 @@ class ProcessingAudioSink(
         }
         val out = pending!!
         if (out.hasRemaining()) {
-            if (!super.handleBuffer(out, pendingPts, pendingCount)) return false
+            if (!deliver(out, pendingPts, pendingCount)) return false
         }
         pending = null
         return true
@@ -84,19 +104,40 @@ class ProcessingAudioSink(
             }
             val out = pending
             if (out != null && out.hasRemaining()) {
-                if (!super.handleBuffer(out, pendingPts, pendingCount)) return
+                if (!deliver(out, pendingPts, pendingCount)) return
             }
             pending = null
         }
-        super.playToEndOfStream()
+        if (usbOn) usbEos = true else super.playToEndOfStream()
     }
 
-    override fun hasPendingData(): Boolean = super.hasPendingData() || (pending?.hasRemaining() == true)
+    private fun deliver(b: ByteBuffer, pts: Long, count: Int): Boolean {
+        if (!usbOn) return super.handleBuffer(b, pts, count)
+        usb!!.write(b)
+        return !b.hasRemaining()
+    }
+
+    override fun play() { playing = true; usb?.takeIf { usbOn }?.setPaused(false); super.play() }
+
+    override fun pause() { playing = false; usb?.takeIf { usbOn }?.setPaused(true); super.pause() }
+
+    override fun setVolume(v: Float) { volume = v; usb?.takeIf { usbOn }?.setGain(v); super.setVolume(v) }
+
+    override fun getCurrentPositionUs(sourceEnded: Boolean): Long =
+        if (usbOn) usb!!.playedFrames() * 1_000_000L / usb.sampleRate.coerceAtLeast(1)
+        else super.getCurrentPositionUs(sourceEnded)
+
+    override fun isEnded(): Boolean =
+        if (usbOn) usbEos && usb!!.bufferedFrames() == 0L && pending?.hasRemaining() != true else super.isEnded()
+
+    override fun hasPendingData(): Boolean = (usbOn && usb!!.bufferedFrames() > 0) || super.hasPendingData() || (pending?.hasRemaining() == true)
 
     override fun flush() {
         pending = null
         eosQueued = false
         if (active) processor.flush()
+        usbEos = false
+        if (usbOn) usb?.flush()
         super.flush()
     }
 
@@ -104,6 +145,8 @@ class ProcessingAudioSink(
         pending = null
         eosQueued = false
         active = false
+        if (usbOn) { usb?.closeOutput(); usbOn = false }
+        usbEos = false
         processor.reset()
         super.reset()
     }

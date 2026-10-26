@@ -65,3 +65,61 @@ JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeDsp_nFlush(JNIEnv* env, 
 }
 
 }  // extern "C"
+
+// ---------------------------------------------------------------- uscita USB diretta
+#include "mlpod_usb.h"
+
+using mlpod::UsbOut;
+
+extern "C" {
+
+JNIEXPORT jlong JNICALL Java_com_marco_mlpod_audio_NativeUsb_nOpen(JNIEnv*, jobject, jint fd, jint ep, jint rate,
+                                                                 jint intervalUs, jint maxPacket) {
+    auto* u = new UsbOut();
+    if (!u->open(fd, ep, rate, intervalUs, maxPacket)) {
+        delete u;
+        return 0;
+    }
+    return reinterpret_cast<jlong>(u);
+}
+
+JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeUsb_nClose(JNIEnv*, jobject, jlong h) {
+    auto* u = reinterpret_cast<UsbOut*>(h);
+    if (!u) return;
+    u->close();
+    delete u;
+}
+
+JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeUsb_nWrite(JNIEnv* env, jobject, jlong h, jobject buf,
+                                                                 jint off, jint len) {
+    auto* u = reinterpret_cast<UsbOut*>(h);
+    auto* p = static_cast<uint8_t*>(env->GetDirectBufferAddress(buf));
+    if (!u || !p || len <= 0) return 0;
+    return static_cast<jint>(u->write(p + off, static_cast<size_t>(len)));
+}
+
+JNIEXPORT jlong JNICALL Java_com_marco_mlpod_audio_NativeUsb_nPlayed(JNIEnv*, jobject, jlong h) {
+    return h ? reinterpret_cast<UsbOut*>(h)->playedFrames() : 0;
+}
+
+JNIEXPORT jlong JNICALL Java_com_marco_mlpod_audio_NativeUsb_nBuffered(JNIEnv*, jobject, jlong h) {
+    return h ? reinterpret_cast<UsbOut*>(h)->bufferedFrames() : 0;
+}
+
+JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeUsb_nSetPaused(JNIEnv*, jobject, jlong h, jboolean p) {
+    if (h) reinterpret_cast<UsbOut*>(h)->setPaused(p == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeUsb_nSetGain(JNIEnv*, jobject, jlong h, jfloat g) {
+    if (h) reinterpret_cast<UsbOut*>(h)->setGain(g);
+}
+
+JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeUsb_nFlush(JNIEnv*, jobject, jlong h) {
+    if (h) reinterpret_cast<UsbOut*>(h)->flush();
+}
+
+JNIEXPORT jboolean JNICALL Java_com_marco_mlpod_audio_NativeUsb_nFailed(JNIEnv*, jobject, jlong h) {
+    return (h && reinterpret_cast<UsbOut*>(h)->failed()) ? JNI_TRUE : JNI_FALSE;
+}
+
+}  // extern "C"

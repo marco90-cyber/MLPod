@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
     <application
         android:name=".MLPodApp"
         android:allowBackup="true"

@@ -44,6 +44,10 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     @Volatile
     var outputBits: Int = 32
 
+    /** Uscita USB diretta: forza PCM 16 bit. */
+    @Volatile
+    var usbMode: Boolean = false
+
     @Volatile
     var info: DspInfo = DspInfo()
         private set
@@ -84,7 +88,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         channels = inputAudioFormat.channelCount
         encoding = enc
         analyzer.sampleRate = sampleRate
-        outEnc = when (outputBits) {
+        outEnc = when (if (usbMode) 16 else outputBits) {
             16 -> NativeDsp.ENC_16
             24 -> NativeDsp.ENC_FLOAT24
             else -> NativeDsp.ENC_FLOAT

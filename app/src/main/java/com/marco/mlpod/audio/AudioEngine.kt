@@ -41,6 +41,7 @@ class AudioEngine(
 
     val outputMonitor = OutputMonitor(app)
     val dac = DacController(app)
+    val usb = UsbAudioController(app)
 
     val player: ExoPlayer
 
@@ -71,6 +72,12 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
+    fun setUsbExclusive(on: Boolean) {
+        settings.usbExclusive = on
+        usb.enabled = on
+        if (on) usb.requestAccess()
+    }
+
     fun setDacMode(on: Boolean) {
         settings.dacMode = on
         dac.enabled = on
@@ -92,6 +99,7 @@ class AudioEngine(
     init {
         eqProcessor.outputBits = settings.outputBits
         dac.enabled = settings.dacMode
+        usb.enabled = settings.usbExclusive
         val factory = object : DefaultRenderersFactory(app) {
             override fun buildAudioSink(
                 context: Context,
@@ -103,7 +111,7 @@ class AudioEngine(
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .build()
                 // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.
-                return ProcessingAudioSink(inner, eqProcessor).also { sink ->
+                return ProcessingAudioSink(inner, eqProcessor, usb).also { sink ->
                     sink.onFormat = { sr, ch, enc -> dac.apply(sr, ch, enc) }
                 }
             }

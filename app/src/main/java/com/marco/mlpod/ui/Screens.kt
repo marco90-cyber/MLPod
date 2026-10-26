@@ -302,6 +302,11 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
             engine.setOutputBits(next)
         },
         MenuItem(
+            "USB esclusivo (driver diretto)",
+            value = if (settings.usbExclusive) "Sì" else "No",
+            sub = "Come USB Exclusive di Poweramp · 16 bit stereo · dal prossimo brano"
+        ) { engine.setUsbExclusive(!settings.usbExclusive) },
+        MenuItem(
             "Modalità DAC USB",
             value = if (settings.dacMode) "Sì" else "No",
             sub = "Bit-perfect, Android 14+ · dal prossimo brano"
