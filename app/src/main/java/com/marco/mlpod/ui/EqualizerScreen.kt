@@ -123,15 +123,17 @@ fun EqualizerScreen(env: AppEnv) {
         if (uri != null) {
             val ok = try {
                 val text = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
-                val parsed = com.marco.mlpod.audio.PresetText.parse(text, settings.eq)
-                if (parsed != null) {
-                    var name = "Importato"
+                var name = "Importato"
+                run {
                     ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                         if (c.moveToFirst()) name = c.getString(0).substringBeforeLast('.')
                             .replace(Regex("(?i)_?(parametric|fixedband)eq$"), "")
                     }
-                    settings.eq = parsed
-                    settings.saveUserPreset(name, parsed)
+                }
+                val list = com.marco.mlpod.audio.PresetText.parseMulti(text, settings.eq, name)
+                if (list.isNotEmpty()) {
+                    for ((n, c) in list) settings.saveUserPreset(n, c)
+                    settings.eq = list.last().second
                     true
                 } else false
             } catch (_: Exception) { false }
@@ -139,12 +141,12 @@ fun EqualizerScreen(env: AppEnv) {
         }
     }
     val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
             val ok = try {
                 ctx.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
-                    it.write(com.marco.mlpod.audio.PresetText.export(settings.eq))
+                    it.write(com.marco.mlpod.audio.PresetText.exportPoweramp("MLPod", settings.eq))
                 }
                 true
             } catch (_: Exception) { false }
@@ -332,13 +334,13 @@ fun EqualizerScreen(env: AppEnv) {
                     PresetRow("+ Salva la configurazione attuale", accent = true) {
                         presetsDialog = false; saveName = ""; saveDialog = true
                     }
-                    PresetRow("Importa da file (Poweramp / AutoEQ)", accent = true) {
+                    PresetRow("Importa da file (Poweramp .json / AutoEQ .txt)", accent = true) {
                         presetsDialog = false
                         importLauncher.launch(arrayOf("text/plain", "application/json", "application/octet-stream", "*/*"))
                     }
                     PresetRow("Esporta la configurazione attuale", accent = true) {
                         presetsDialog = false
-                        exportLauncher.launch("MLPod_ParametricEQ.txt")
+                        exportLauncher.launch("MLPod_preset.json")
                     }
                     val mine = settings.userPresets
                     if (mine.isNotEmpty()) {

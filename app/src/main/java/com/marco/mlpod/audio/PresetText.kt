@@ -22,6 +22,48 @@ object PresetText {
 
     private fun num(s: String): Float? = s.trim().replace(',', '.').toFloatOrNull()
 
+    /** Nome + configurazione. Accetta il JSON di Poweramp (elenco di preset) oppure il testo AutoEQ. */
+    fun parseMulti(text: String, base: EqConfig, fallbackName: String): List<Pair<String, EqConfig>> {
+        val t = text.trim().removePrefix("\uFEFF")
+        if (t.startsWith("[") || t.startsWith("{")) {
+            try {
+                val arr = if (t.startsWith("[")) org.json.JSONArray(t) else org.json.JSONArray().put(org.json.JSONObject(t))
+                val out = ArrayList<Pair<String, EqConfig>>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val sb = StringBuilder("Preamp: ${o.optDouble("preamp", 0.0)} dB\n")
+                    val bands = o.optJSONArray("bands") ?: continue
+                    for (k in 0 until bands.length()) {
+                        val b = bands.getJSONObject(k)
+                        val ty = when (b.optInt("type", 2)) { 0 -> "LS"; 1 -> "HS"; 2 -> "PK"; else -> continue }
+                        sb.append("Filter ${k + 1}: ON $ty Fc ${b.optDouble("frequency")} Hz Gain ${b.optDouble("gain")} dB Q ${b.optDouble("q", 0.0)}\n")
+                    }
+                    val cfg = parse(sb.toString(), base) ?: continue
+                    val name = o.optString("name", "").replace(Regex("\\s+"), " ").trim().take(24).ifEmpty { fallbackName }
+                    out.add(name to cfg)
+                }
+                return out
+            } catch (_: Exception) {
+                return emptyList()
+            }
+        }
+        return parse(t, base)?.let { listOf(fallbackName to it) } ?: emptyList()
+    }
+
+    /** Esporta nel JSON di Poweramp (elenco con un preset). */
+    fun exportPoweramp(name: String, cfg: EqConfig): String {
+        val bands = org.json.JSONArray()
+        fun band(type: Int, f: Float, q: Float, g: Float) = org.json.JSONObject()
+            .put("type", type).put("channels", 0).put("frequency", f.toDouble())
+            .put("q", q.toDouble()).put("gain", g.toDouble()).put("color", 0)
+        if (cfg.bassPercent != 0) bands.put(band(0, cfg.bassFreq, 0.8f, EqMath.toneDb(cfg.bassPercent).toFloat()))
+        if (cfg.treblePercent != 0) bands.put(band(1, cfg.trebleFreq, 0.6f, EqMath.toneDb(cfg.treblePercent).toFloat()))
+        for (i in 0 until cfg.bandCount) bands.put(band(2, cfg.freqs[i], cfg.qFor(i).toFloat(), cfg.gains[i]))
+        val o = org.json.JSONObject().put("name", name).put("preamp", cfg.preampDb.toDouble())
+            .put("parametric", true).put("bands", bands)
+        return org.json.JSONArray().put(o).toString(2)
+    }
+
     /** Restituisce la configurazione letta (partendo da [base]) oppure null se il testo non è riconoscibile. */
     fun parse(text: String, base: EqConfig): EqConfig? {
         val lines = text.lines()
@@ -87,7 +129,8 @@ object PresetText {
             val n = list.size.coerceAtLeast(EqConfig.MIN_BANDS)
             val freqs = ArrayList(list.map { it.first })
             val gains = ArrayList(list.map { it.second.coerceIn(-EqConfig.GAIN_RANGE, EqConfig.GAIN_RANGE) })
-            val qs = ArrayList(list.map { it.third.coerceIn(EqConfig.MIN_Q, EqConfig.MAX_Q) })
+            val autoQ = EqConfig.autoQs(freqs)
+            val qs = ArrayList(list.mapIndexed { i, t -> if (t.third <= 0f) autoQ[i] else t.third.coerceIn(EqConfig.MIN_Q, EqConfig.MAX_Q) })
             // completa fino al minimo di bande con bande neutre
             var f = freqs.last()
             while (freqs.size < n) { f = (f * 1.3f).coerceAtMost(EqConfig.MAX_FREQ); freqs.add(f); gains.add(0f); qs.add(1f) }

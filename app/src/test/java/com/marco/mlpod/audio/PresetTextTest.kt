@@ -33,3 +33,32 @@ class PresetTextTest {
     @Test
     fun graphicEq() = assertNotNull(PresetText.parse("GraphicEQ: 20 0; 1000 3; 20000 -2", EqConfig()))
 }
+
+class PowerampJsonTest {
+    @Test
+    fun importsPowerampJson() {
+        val j = """[{"name":"One\n\nOdio","preamp":4.86,"parametric":false,"bands":[
+          {"type":0,"channels":0,"frequency":90,"q":0.8,"gain":2.46,"color":0},
+          {"type":1,"channels":0,"frequency":10000,"q":0.6,"gain":5.15,"color":0},
+          {"type":2,"channels":0,"frequency":16,"q":0.0,"gain":1.6,"color":0},
+          {"type":2,"channels":0,"frequency":1000,"q":0.0,"gain":-1.0,"color":0},
+          {"type":2,"channels":0,"frequency":20000,"q":0.0,"gain":6.0,"color":0}]}]"""
+        val l = PresetText.parseMulti(j, EqConfig(), "x")
+        assertEquals(1, l.size)
+        assertEquals("One Odio", l[0].first)
+        val c = l[0].second
+        assertEquals(3, c.bandCount)
+        assertEquals(25, c.bassPercent)
+        assertEquals(4.86f, c.preampDb, 1e-3f)
+        assert(c.qs.all { it > 0.2f })
+    }
+
+    @Test
+    fun exportJsonRoundTrip() {
+        val c = EqConfig(enabled = true).withGain(3, 2f).copy(preampDb = -1f, treblePercent = 40)
+        val r = PresetText.parseMulti(PresetText.exportPoweramp("T", c), EqConfig(), "x")[0].second
+        assertEquals(40, r.treblePercent)
+        assertEquals(10, r.bandCount)
+        assertEquals(2f, r.gains[3], 1e-3f)
+    }
+}
