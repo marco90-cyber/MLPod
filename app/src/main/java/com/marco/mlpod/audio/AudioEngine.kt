@@ -40,8 +40,6 @@ class AudioEngine(
     val eqProcessor = EqAudioProcessor(analyzer)
 
     val outputMonitor = OutputMonitor(app)
-    val dac = DacController(app)
-    val usb = UsbAudioController(app)
 
     val player: ExoPlayer
 
@@ -72,37 +70,8 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
-    /**
-     * Con l'USB esclusivo il DAC sparisce dall'audio di sistema: Android lo scambia per una disconnessione
-     * ("becoming noisy") e metterebbe in pausa il brano. Si disattiva finché l'uscita diretta è in uso.
-     */
-    fun setNoisyHandling(on: Boolean) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            try { player.setHandleAudioBecomingNoisy(on) } catch (_: Throwable) {}
-            AppLog.i("Audio", "Pausa automatica allo scollegamento: ${if (on) "attiva" else "disattivata (USB esclusivo)"}")
-        }
-    }
-
-    fun setUsbResample(on: Boolean) {
-        settings.usbResample = on
-        usb.resample = on
-    }
-
-    fun setUsbExclusive(on: Boolean) {
-        settings.usbExclusive = on
-        usb.enabled = on
-        if (on) usb.requestAccess()
-    }
-
-    fun setDacMode(on: Boolean) {
-        settings.dacMode = on
-        dac.enabled = on
-    }
-
-    /** Cambia la qualità di uscita (16/24/32 bit); si applica dal prossimo brano. */
-    fun setOutputBits(bits: Int) {
-        settings.outputBits = bits
-        eqProcessor.outputBits = bits
+    fun setAdaptiveOutput(on: Boolean) {
+        settings.adaptiveOutput = on
     }
 
     private var queue: List<Track> = emptyList()
@@ -113,10 +82,6 @@ class AudioEngine(
     private var controllerFuture: Any? = null
 
     init {
-        eqProcessor.outputBits = settings.outputBits
-        dac.enabled = settings.dacMode
-        usb.enabled = settings.usbExclusive
-        usb.resample = settings.usbResample
         val factory = object : DefaultRenderersFactory(app) {
             override fun buildAudioSink(
                 context: Context,
@@ -128,10 +93,7 @@ class AudioEngine(
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .build()
                 // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.
-                return ProcessingAudioSink(inner, eqProcessor, usb).also { sink ->
-                    sink.onFormat = { sr, ch, enc -> dac.apply(sr, ch, enc) }
-                    sink.onUsbActive = { on -> setNoisyHandling(!on) }
-                }
+                return ProcessingAudioSink(inner, eqProcessor, outputMonitor) { settings.adaptiveOutput }
             }
         }
         player = ExoPlayer.Builder(app, factory)
@@ -252,7 +214,7 @@ class AudioEngine(
         })
         AppLog.i(
             "Audio",
-            "Motore audio pronto (uscita ${settings.outputBits} bit)"
+            "Motore audio pronto (uscita adattiva: ${if (settings.adaptiveOutput) "sì" else "no"})"
         )
     }
 

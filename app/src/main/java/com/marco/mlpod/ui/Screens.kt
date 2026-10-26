@@ -294,28 +294,10 @@ fun AppEnv.playbackScreen(): MenuScreen = MenuScreen("Riproduzione") {
         MenuItem("Mescola", value = if (engine.shuffleOn) "Sì" else "No") { engine.toggleShuffle() },
         MenuItem("Ripeti", value = repeatLabels[engine.repeatMode.coerceIn(0, 2)]) { engine.cycleRepeat() },
         MenuItem(
-            "Qualità uscita",
-            value = "${settings.outputBits} bit",
-            sub = "16, 24 o 32 bit · dal prossimo brano"
-        ) {
-            val next = when (settings.outputBits) { 16 -> 24; 24 -> 32; else -> 16 }
-            engine.setOutputBits(next)
-        },
-        MenuItem(
-            "USB esclusivo (driver diretto)",
-            value = if (settings.usbExclusive) "Sì" else "No",
-            sub = "Come USB Exclusive di Poweramp · 16 bit stereo · dal prossimo brano"
-        ) { engine.setUsbExclusive(!settings.usbExclusive) },
-        MenuItem(
-            "Ricampionamento USB",
-            value = if (settings.usbResample) "Sì" else "No",
-            sub = "Se il DAC non accetta la frequenza del file (es. 96 kHz) la converto io · dal prossimo brano"
-        ) { engine.setUsbResample(!settings.usbResample) },
-        MenuItem(
-            "Modalità DAC USB",
-            value = if (settings.dacMode) "Sì" else "No",
-            sub = "Bit-perfect, Android 14+ · dal prossimo brano"
-        ) { engine.setDacMode(!settings.dacMode) },
+            "Uscita adattiva",
+            value = if (settings.adaptiveOutput) "Sì" else "No",
+            sub = "Bit e kHz si adattano a DAC o casse · dal prossimo brano"
+        ) { engine.setAdaptiveOutput(!settings.adaptiveOutput) },
         MenuItem("Equalizzatore", chevron = true) { overlay = Overlay.Equalizer },
         MenuItem("Uscita audio", chevron = true) { overlay = Overlay.Output },
     )
@@ -346,7 +328,7 @@ fun AppEnv.audioInfoScreen(): MenuScreen = MenuScreen("Info audio") {
             info("Brano", t.title),
             info("Formato", engine.audioInfo.ifBlank { t.detailLine() }),
             info("Hi-Res", if (engine.hiResNow) "Sì" else "No"),
-            info("Uscita", "${settings.outputBits} bit"),
+            info("Uscita", if (settings.adaptiveOutput) "Adattiva" else "Standard"),
             info("Equalizzatore", if (settings.eq.enabled) "${settings.eq.bandCount} bande attivo" else "Spento"),
             info("File", t.uri),
         )

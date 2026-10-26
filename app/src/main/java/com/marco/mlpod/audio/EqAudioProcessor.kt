@@ -40,13 +40,9 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     @Volatile
     private var configVersion = 0
 
-    /** Qualità di uscita scelta dall'utente: 16, 24 o 32 (vale dal prossimo brano). */
+    /** Profondità di uscita decisa dall'uscita adattiva: 16 (con dither) oppure 32 (float). */
     @Volatile
     var outputBits: Int = 32
-
-    /** Uscita USB diretta: forza PCM 16 bit. */
-    @Volatile
-    var usbMode: Boolean = false
 
     /** Frequenza di uscita se diversa da quella d'ingresso (ricampionamento), 0 = nessuno. */
     @Volatile
@@ -92,7 +88,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
         sampleRate = inputAudioFormat.sampleRate
         channels = inputAudioFormat.channelCount
         encoding = enc
-        outEnc = when (if (usbMode) 16 else outputBits) {
+        outEnc = when (outputBits) {
             16 -> NativeDsp.ENC_16
             24 -> NativeDsp.ENC_FLOAT24
             else -> NativeDsp.ENC_FLOAT

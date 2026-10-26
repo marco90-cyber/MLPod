@@ -98,15 +98,8 @@ class Settings(context: Context) {
 
     /** 0 = no, 1 = tutto, 2 = brano singolo */
     var repeatMode by IntPref(sp, "repeat", 0)
-    /** Qualità di uscita: 16, 24 o 32 bit */
-    var outputBits by IntPref(sp, "output_bits", 32)
-    /** Modalità DAC bit-perfect (Android 14+) */
-    var dacMode by BoolPref(sp, "dac_mode", false)
-    /** Uscita USB esclusiva (driver diretto) */
-    var usbExclusive by BoolPref(sp, "usb_exclusive", false)
-    /** Ricampionamento nell'app per l'uscita USB diretta */
-    var usbResample by BoolPref(sp, "usb_resample", true)
-    var hiResOutput by BoolPref(sp, "hires_output", true)
+    /** Uscita adattiva: bit e kHz scelti in base al DAC o alle casse collegate */
+    var adaptiveOutput by BoolPref(sp, "adaptive_output", true)
     var volume by FloatPref(sp, "volume", 1f)
 
     // Analizzatore

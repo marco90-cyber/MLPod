@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.os.Build
 import androidx.compose.runtime.getValue
@@ -32,6 +33,45 @@ class OutputMonitor(context: Context) {
     var exact by mutableStateOf(false)
         private set
 
+    private var device: AudioDeviceInfo? = null
+
+    /** Ultima scelta di uscita (testo per la schermata Uscita audio). */
+    var lastPlan by mutableStateOf("In attesa di un brano")
+
+    class Plan(val rate: Int, val bits: Int) {
+        fun describe(fromRate: Int): String {
+            val r = "${rate / 1000.0} kHz".replace(".0 ", " ")
+            val src = if (fromRate != rate) " (ricampionato da ${fromRate / 1000.0} kHz)".replace(".0 ", " ") else ""
+            return "$r · ${if (bits == 16) "16 bit" else "32 bit float"}$src"
+        }
+    }
+
+    /**
+     * Sceglie frequenza e profondità adatte al dispositivo attivo, in base a quanto dichiara Android.
+     * Dichiarazione vuota = accetta tutto: nessuna conversione di frequenza.
+     */
+    fun plan(fileRate: Int): Plan {
+        refresh()
+        val d = device
+        val rates = d?.sampleRates?.filter { it > 0 }?.sorted().orEmpty()
+        val encs = d?.encodings?.toList().orEmpty()
+        val target = when {
+            rates.isEmpty() || fileRate in rates -> fileRate
+            else -> {
+                val fam44 = fileRate % 44100 == 0
+                val below = rates.filter { it <= fileRate }
+                below.lastOrNull { (it % 44100 == 0) == fam44 && (it % 48000 == 0) == !fam44 }
+                    ?: below.lastOrNull()
+                    ?: rates.first()
+            }
+        }
+        val wide = encs.isEmpty() || encs.any {
+            it == AudioFormat.ENCODING_PCM_FLOAT || it == AudioFormat.ENCODING_PCM_32BIT ||
+                it == AudioFormat.ENCODING_PCM_24BIT_PACKED || it == AudioFormat.ENCODING_PCM_8_24BIT
+        }
+        return Plan(target, if (wide) 32 else 16)
+    }
+
     init {
         refresh()
         am.registerAudioDeviceCallback(object : AudioDeviceCallback() {
@@ -58,6 +98,7 @@ class OutputMonitor(context: Context) {
             val outs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             dev = outs.minByOrNull { priority(kindOf(it.type)) }
         }
+        device = dev
         kind = dev?.let { kindOf(it.type) } ?: OutKind.Speaker
         name = dev?.productName?.toString().orEmpty()
         exact = ex
