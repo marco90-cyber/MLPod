@@ -26,6 +26,7 @@ class ProcessingAudioSink(
     private val usb: UsbAudioController? = null,
 ) : ForwardingAudioSink(sink) {
 
+    var onUsbActive: ((Boolean) -> Unit)? = null
     var onFormat: ((sampleRate: Int, channels: Int, encoding: Int) -> Unit)? = null
     private var usbOn = false
     private var usbEos = false
@@ -41,7 +42,7 @@ class ProcessingAudioSink(
         active = false
         pending = null
         eosQueued = false
-        if (usbOn) { usb?.closeOutput(); usbOn = false }
+        if (usbOn) { usb?.closeOutput(); usbOn = false; onUsbActive?.invoke(false) }
         usbEos = false
         val target = if (usb != null && usb.enabled && MimeTypes.AUDIO_RAW == inputFormat.sampleMimeType &&
             inputFormat.channelCount == 2) usb.pickRate(inputFormat.sampleRate, usb.resample) else 0
@@ -67,6 +68,7 @@ class ProcessingAudioSink(
             super.reset()
             if (usb.open(fmt.sampleRate, inputFormat.sampleRate)) {
                 usbOn = true
+                onUsbActive?.invoke(true)
                 usb.setGain(volume)
                 usb.setPaused(!playing)
                 return
@@ -147,7 +149,7 @@ class ProcessingAudioSink(
         pending = null
         eosQueued = false
         active = false
-        if (usbOn) { usb?.closeOutput(); usbOn = false }
+        if (usbOn) { usb?.closeOutput(); usbOn = false; onUsbActive?.invoke(false) }
         usbEos = false
         processor.reset()
         super.reset()

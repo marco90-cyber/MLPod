@@ -72,6 +72,17 @@ class AudioEngine(
     var trackOffload by mutableStateOf(false)
         private set
 
+    /**
+     * Con l'USB esclusivo il DAC sparisce dall'audio di sistema: Android lo scambia per una disconnessione
+     * ("becoming noisy") e metterebbe in pausa il brano. Si disattiva finché l'uscita diretta è in uso.
+     */
+    fun setNoisyHandling(on: Boolean) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try { player.setHandleAudioBecomingNoisy(on) } catch (_: Throwable) {}
+            AppLog.i("Audio", "Pausa automatica allo scollegamento: ${if (on) "attiva" else "disattivata (USB esclusivo)"}")
+        }
+    }
+
     fun setUsbResample(on: Boolean) {
         settings.usbResample = on
         usb.resample = on
@@ -119,6 +130,7 @@ class AudioEngine(
                 // Il DSP gira prima del sink: il sink di Media3 salta i processori per il PCM 24/32 bit.
                 return ProcessingAudioSink(inner, eqProcessor, usb).also { sink ->
                     sink.onFormat = { sr, ch, enc -> dac.apply(sr, ch, enc) }
+                    sink.onUsbActive = { on -> setNoisyHandling(!on) }
                 }
             }
         }
@@ -164,6 +176,14 @@ class AudioEngine(
         settings.onEqChanged = { cfg -> eqProcessor.setConfig(cfg) }
 
         player.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                AppLog.i("Audio", "playWhenReady=$playWhenReady, motivo=$reason (1=utente 2=perdita focus audio 3=scollegamento/noisy 4=remoto 5=fine brano)")
+            }
+
+            override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+                AppLog.i("Audio", "Riproduzione sospesa: motivo=$playbackSuppressionReason")
+            }
+
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 isPlaying = isPlayingNow
                 AppLog.d("Audio", "isPlaying=$isPlayingNow")
@@ -226,6 +246,7 @@ class AudioEngine(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                AppLog.i("Audio", "Stato player: $playbackState (1=inattivo 2=buffering 3=pronto 4=finito)")
                 if (playbackState == Player.STATE_READY) consecutiveErrors = 0
             }
         })
