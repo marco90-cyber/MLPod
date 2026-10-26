@@ -43,6 +43,8 @@ class UsbAudioController(private val ctx: Context) {
     private var device: UsbDevice? = null
     private var conn: UsbDeviceConnection? = null
     private var claimed: UsbInterface? = null
+    private val claimedAll = ArrayList<UsbInterface>()
+    private var restarts = 0
     private var handle = 0L
     private var rate = 0
     private var scratch: ByteBuffer? = null
@@ -206,6 +208,15 @@ class UsbAudioController(private val ctx: Context) {
             val i = d.getInterface(k)
             if (i.id == a.iface && i.alternateSetting == a.alt) target = i
         }
+        // prende il controllo di tutte le interfacce audio, così il driver di sistema non interferisce
+        claimedAll.clear()
+        val seen = HashSet<Int>()
+        for (k in 0 until d.interfaceCount) {
+            val i = d.getInterface(k)
+            if (i.interfaceClass == UsbConstants.USB_CLASS_AUDIO && i.id != a.iface && seen.add(i.id)) {
+                if (c.claimInterface(i, true)) claimedAll.add(i)
+            }
+        }
         if (target == null || !c.claimInterface(target, true) || !c.setInterface(target)) {
             c.close(); status = "Il DAC non si lascia configurare (uso Android)"; return false
         }
@@ -218,9 +229,10 @@ class UsbAudioController(private val ctx: Context) {
         val h = NativeUsb.nOpen(c.fileDescriptor, a.ep, r, intervalUs, a.maxPacket)
         if (h == 0L) {
             AppLog.w("Audio", "USB: nOpen fallita")
-            c.releaseInterface(target); c.close(); status = "Apertura USB fallita (uso Android)"; return false
+            c.releaseInterface(target); for (x in claimedAll) c.releaseInterface(x); claimedAll.clear()
+            c.close(); status = "Apertura USB fallita (uso Android)"; return false
         }
-        conn = c; claimed = target; handle = h; rate = r
+        conn = c; claimed = target; handle = h; rate = r; restarts = 0
         status = "USB esclusivo attivo: ${r / 1000.0} kHz · 16 bit · stereo"
         AppLog.i("Audio", "USB: $status (ep=0x${a.ep.toString(16)}, intervallo ${intervalUs} µs, pacchetto max ${a.maxPacket})")
         return true
@@ -243,6 +255,8 @@ class UsbAudioController(private val ctx: Context) {
                     }
                     c.releaseInterface(i)
                 }
+                for (x in claimedAll) c.releaseInterface(x)
+                claimedAll.clear()
             } catch (_: Throwable) {
             }
             c.close()
@@ -256,9 +270,19 @@ class UsbAudioController(private val ctx: Context) {
         val h = handle
         if (h != 0L && NativeUsb.nFailed(h)) {
             val e = NativeUsb.nErrno(h)
-            closeOutput()
-            status = "Trasferimento USB interrotto (errore $e)"
-            AppLog.w("Audio", "USB: $status")
+            val c = conn
+            val t = claimed
+            if (restarts < 20 && c != null && t != null) {
+                // il sistema può azzerare l'alt-setting: lo reimposto e riavvio i trasferimenti
+                restarts++
+                val ok = c.setInterface(t)
+                AppLog.w("Audio", "USB: errore $e, ripristino interfaccia ($ok), tentativo $restarts")
+                NativeUsb.nRestart(h)
+            } else {
+                closeOutput()
+                status = "Trasferimento USB interrotto (errore $e)"
+                AppLog.w("Audio", "USB: $status")
+            }
         }
         if (handle == 0L) {
             // uscita chiusa: scarta i dati per non bloccare il player

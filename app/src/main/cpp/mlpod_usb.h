@@ -90,6 +90,20 @@ public:
     bool failed() const { return failed_.load(); }
     int lastErrno() const { return err_.load(); }
 
+    // Riavvia il thread dopo un errore (per esempio alt-setting azzerato dal sistema), tenendo i dati.
+    void restart() {
+        running_ = false;
+        if (th_.joinable()) th_.join();
+        failed_ = false;
+        err_ = 0;
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            for (auto& r : real_) r = 0;
+        }
+        running_ = true;
+        th_ = std::thread([this] { run(); });
+    }
+
     void flush() {
         std::lock_guard<std::mutex> lk(m_);
         rd_ = wr_ = fill_ = 0;
@@ -144,7 +158,11 @@ private:
         real_[idx] = real;
     }
 
-    bool submit(int idx) { return ioctl(fd_, USBDEVFS_SUBMITURB, urb_[idx]) == 0; }
+    bool submit(int idx) {
+        if (ioctl(fd_, USBDEVFS_SUBMITURB, urb_[idx]) != 0) return false;
+        inflight_++;
+        return true;
+    }
 
     void run() {
         int submitted = 0;
@@ -172,6 +190,7 @@ private:
                     break;
                 }
                 if (!done) break;
+                inflight_--;
                 int idx = static_cast<int>(reinterpret_cast<intptr_t>(done->usercontext));
                 {
                     std::lock_guard<std::mutex> lk(m_);
@@ -188,11 +207,16 @@ private:
             }
             if (failed_.load()) break;
         }
-        for (int i = 0; i < submitted; i++) ioctl(fd_, USBDEVFS_DISCARDURB, urb_[i]);
-        for (int i = 0; i < submitted * 4; i++) {
+        for (int i = 0; i < kUrbs; i++) ioctl(fd_, USBDEVFS_DISCARDURB, urb_[i]);
+        for (int tries = 0; tries < 200 && inflight_.load() > 0; tries++) {
             usbdevfs_urb* done = nullptr;
-            if (ioctl(fd_, USBDEVFS_REAPURBNDELAY, &done) < 0) break;
+            if (ioctl(fd_, USBDEVFS_REAPURBNDELAY, &done) == 0 && done) {
+                inflight_--;
+            } else {
+                usleep(2000);
+            }
         }
+        (void)submitted;
     }
 
     int fd_ = -1, ep_ = 0, rate_ = 44100, intervalUs_ = 1000, maxPacket_ = 192;
@@ -206,6 +230,7 @@ private:
     std::atomic<long long> played_{0};
     std::atomic<bool> running_{false}, paused_{true}, failed_{false};
     std::atomic<int> err_{0};
+    std::atomic<int> inflight_{0};
     std::atomic<float> gain_{1.0f};
     std::thread th_;
 };

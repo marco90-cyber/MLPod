@@ -127,3 +127,7 @@ JNIEXPORT jboolean JNICALL Java_com_marco_mlpod_audio_NativeUsb_nFailed(JNIEnv*,
 extern "C" JNIEXPORT jint JNICALL Java_com_marco_mlpod_audio_NativeUsb_nErrno(JNIEnv*, jobject, jlong h) {
     return h ? reinterpret_cast<UsbOut*>(h)->lastErrno() : 0;
 }
+
+extern "C" JNIEXPORT void JNICALL Java_com_marco_mlpod_audio_NativeUsb_nRestart(JNIEnv*, jobject, jlong h) {
+    if (h) reinterpret_cast<UsbOut*>(h)->restart();
+}

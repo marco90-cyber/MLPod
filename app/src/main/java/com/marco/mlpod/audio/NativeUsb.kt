@@ -16,4 +16,5 @@ object NativeUsb {
     external fun nFlush(h: Long)
     external fun nFailed(h: Long): Boolean
     external fun nErrno(h: Long): Int
+    external fun nRestart(h: Long)
 }
