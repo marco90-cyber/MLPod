@@ -44,8 +44,14 @@ public:
         sr_ = sampleRate > 1000.0 ? sampleRate : 44100.0;
         ch_ = std::max(1, channels);
         L_ = std::max(2, static_cast<int>(lookaheadMs * 0.001 * sr_));
-        D_ = L_ - 1;
-        delay_.assign(static_cast<size_t>(L_) * ch_, 0.0f);
+        // il rilevatore true-peak vede un picco tra campioni con al massimo kTpHalf campioni di
+        // ritardo: l'audio esce kTpHalf campioni piu' tardi, cosi' ogni picco e' gia' "noto"
+        // a tutta la finestra di gain che lo copre
+        D_ = L_ - 1 + kTpHalf;
+        DL_ = L_ + kTpHalf;
+        delay_.assign(static_cast<size_t>(DL_) * ch_, 0.0f);
+        hist_.assign(static_cast<size_t>(kTpTaps) * ch_, 0.0f);
+        histPos_ = 0;
         rRing_.assign(L_, 1.0f);
         dqCap_ = L_ + 1;
         dqIdx_.assign(dqCap_, 0);
@@ -63,6 +69,8 @@ public:
 
     void reset() {
         std::fill(delay_.begin(), delay_.end(), 0.0f);
+        std::fill(hist_.begin(), hist_.end(), 0.0f);
+        histPos_ = 0;
         std::fill(rRing_.begin(), rRing_.end(), 1.0f);
         sum_ = static_cast<double>(L_);
         r_ = 1.0f;
@@ -82,6 +90,7 @@ public:
             float* fr = buf + static_cast<size_t>(f) * ch_;
             float peak = 0.0f;
             for (int c = 0; c < ch_; c++) peak = std::max(peak, std::fabs(fr[c]));
+            peak = std::max(peak, truePeakStep(fr));
             const float need = peak > thr_ ? thr_ / peak : 1.0f;
 
             // minimo mobile degli ultimi L valori di "need"
@@ -103,8 +112,9 @@ public:
             if (g < minGain_) minGain_ = g;
 
             // ritardo di D campioni
-            float* in = &delay_[static_cast<size_t>(slot) * ch_];
-            const float* out = &delay_[static_cast<size_t>((n_ + 1) % L_) * ch_];
+            const int dslot = static_cast<int>(n_ % DL_);
+            float* in = &delay_[static_cast<size_t>(dslot) * ch_];
+            const float* out = &delay_[static_cast<size_t>((n_ + 1) % DL_) * ch_];
             for (int c = 0; c < ch_; c++) in[c] = fr[c];
             for (int c = 0; c < ch_; c++) {
                 const float v = out[c] * g;
@@ -120,6 +130,69 @@ public:
     }
 
 private:
+    // ---- rilevatore true-peak: sovracampionamento x4 (3 fasi intermedie) con sinc finestrata
+    // Kaiser, kTpTaps punti per fase. Stima i picchi tra campioni che il solo massimo dei campioni
+    // non vede (un DAC li ricostruisce e puo' superare 0 dBFS anche con campioni sotto la soglia).
+    static constexpr int kTpTaps = 16;
+    static constexpr int kTpHalf = kTpTaps / 2;
+
+    static double bessel0(double x) {
+        double sum = 1.0, term = 1.0;
+        for (int k = 1; k < 40; k++) {
+            term *= (x / (2.0 * k)) * (x / (2.0 * k));
+            sum += term;
+        }
+        return sum;
+    }
+
+    static const float* tpCoefs() {
+        static float c[3][kTpTaps];
+        static bool ready = false;
+        if (!ready) {
+            const double beta = 9.0, pi = 3.14159265358979323846;
+            for (int ph = 1; ph <= 3; ph++) {
+                const double frac = ph / 4.0;
+                double sum = 0.0;
+                double tmp[kTpTaps];
+                for (int j = 0; j < kTpTaps; j++) {
+                    // la fase cade tra i campioni di indice kTpHalf-1 e kTpHalf
+                    const double t = j - (kTpHalf - 1) - frac;
+                    const double sinc = std::fabs(t) < 1e-12 ? 1.0 : std::sin(pi * t) / (pi * t);
+                    const double r = t / kTpHalf;
+                    const double win = std::fabs(r) >= 1.0 ? 0.0 : bessel0(beta * std::sqrt(1.0 - r * r)) / bessel0(beta);
+                    tmp[j] = sinc * win;
+                    sum += tmp[j];
+                }
+                for (int j = 0; j < kTpTaps; j++) c[ph - 1][j] = static_cast<float>(tmp[j] / sum);
+            }
+            ready = true;
+        }
+        return &c[0][0];
+    }
+
+    // Inserisce il frame e ritorna il massimo |valore| tra i campioni interpolati.
+    float truePeakStep(const float* fr) {
+        const float* co = tpCoefs();
+        float* h = &hist_[0];
+        // finestra scorrevole per canale: hist_[c * kTpTaps + j], j=0 piu' vecchio
+        float peak = 0.0f;
+        for (int c = 0; c < ch_; c++) {
+            float* hc = h + static_cast<size_t>(c) * kTpTaps;
+            for (int j = 0; j < kTpTaps - 1; j++) hc[j] = hc[j + 1];
+            hc[kTpTaps - 1] = fr[c];
+            for (int ph = 0; ph < 3; ph++) {
+                const float* k = co + ph * kTpTaps;
+                float acc = 0.0f;
+                for (int j = 0; j < kTpTaps; j++) acc += hc[j] * k[j];
+                peak = std::max(peak, std::fabs(acc));
+            }
+        }
+        return peak;
+    }
+
+    std::vector<float> hist_;
+    int histPos_ = 0;
+    int DL_ = 220 + kTpHalf;
     double sr_ = 44100.0;
     int ch_ = 2, L_ = 220, D_ = 219;
     float thresholdDb_ = -0.5f, releaseMs_ = 80.0f;
@@ -142,6 +215,8 @@ public:
         sr_ = sampleRate;
         ch_ = std::max(1, std::min(channels, 8));
         state_.assign(static_cast<size_t>(ch_) * stages_ * 2, 0.0);
+        cur_.clear();  // nuova frequenza/canali: i coefficienti si applicano di colpo, senza rampa
+        rampLeft_ = 0;
         limiter_.prepare(sr_, ch_, lookaheadMs_);
         limiter_.setParams(thrDb_, relMs_);
         limiterReady_ = true;
@@ -149,16 +224,21 @@ public:
     }
 
     // coef: 5 valori per stadio [b0 b1 b2 a1 a2], normalizzati con a0 = 1.
+    // I nuovi coefficienti e il preamp non si applicano di colpo: si passa dai valori attuali ai
+    // nuovi con una rampa lineare di circa 30 ms (niente "zipper noise" ruotando le manopole).
     void setFilters(const double* coef, int stages, double preGain) {
-        if (stages != stages_) {
+        const bool resized = stages != stages_;
+        if (resized) {
             stages_ = stages;
             state_.assign(static_cast<size_t>(ch_) * stages_ * 2, 0.0);
         }
         coef_.assign(coef, coef + static_cast<size_t>(stages) * 5);
-        active_.assign(stages, 0);
-        for (int k = 0; k < stages; k++) {
-            const double* c = &coef_[static_cast<size_t>(k) * 5];
-            active_[k] = !(c[0] == 1.0 && c[1] == 0.0 && c[2] == 0.0 && c[3] == 0.0 && c[4] == 0.0);
+        if (resized || cur_.size() != coef_.size()) {
+            cur_ = coef_;  // primo caricamento: nessuna rampa
+            preCur_ = preGain;
+            rampLeft_ = 0;
+        } else {
+            rampLeft_ = std::max(256, static_cast<int>(sr_ * 0.03));
         }
         pre_ = preGain;
     }
@@ -177,6 +257,9 @@ public:
 
     void reset() {
         std::fill(state_.begin(), state_.end(), 0.0);
+        cur_ = coef_;
+        preCur_ = pre_;
+        rampLeft_ = 0;
         limiter_.reset();
         if (rsOn_) rs_.reset();
     }
@@ -278,21 +361,64 @@ private:
         }
     }
 
+    static bool isIdentity(const double* c) {
+        return c[0] == 1.0 && c[1] == 0.0 && c[2] == 0.0 && c[3] == 0.0 && c[4] == 0.0;
+    }
+
     void runFilters(int frames) {
         const size_t n = static_cast<size_t>(frames) * ch_;
         if (work_.size() < n) work_.resize(n);
         double* w = work_.data();
         const float* s = scratch_.data();
-        for (size_t i = 0; i < n; i++) w[i] = static_cast<double>(s[i]) * pre_;
+
+        // frame della rampa che cadono in questo blocco
+        const int nr = std::min(frames, rampLeft_);
+        const bool rampEnds = nr == rampLeft_;
+
+        // preamp (con rampa)
+        if (preCur_ == pre_) {
+            for (size_t i = 0; i < n; i++) w[i] = static_cast<double>(s[i]) * pre_;
+        } else {
+            const double dp = rampLeft_ > 0 ? (pre_ - preCur_) / rampLeft_ : 0.0;
+            for (int f = 0; f < frames; f++) {
+                const double g = f < nr ? preCur_ + dp * (f + 1) : pre_;
+                for (int c = 0; c < ch_; c++) {
+                    const size_t i = static_cast<size_t>(f) * ch_ + c;
+                    w[i] = static_cast<double>(s[i]) * g;
+                }
+            }
+            preCur_ = rampEnds ? pre_ : preCur_ + dp * nr;
+        }
 
         for (int k = 0; k < stages_; k++) {
-            if (!active_[k]) continue;
-            const double* c = &coef_[static_cast<size_t>(k) * 5];
-            const double b0 = c[0], b1 = c[1], b2 = c[2], a1 = c[3], a2 = c[4];
+            const double* t = &coef_[static_cast<size_t>(k) * 5];
+            double* cc = &cur_[static_cast<size_t>(k) * 5];
+            const bool same = cc[0] == t[0] && cc[1] == t[1] && cc[2] == t[2] && cc[3] == t[3] && cc[4] == t[4];
+            if (same && isIdentity(t)) continue;  // stadio neutro: salta
+
+            double d[5] = {0, 0, 0, 0, 0};
+            if (!same && rampLeft_ > 0) {
+                for (int i = 0; i < 5; i++) d[i] = (t[i] - cc[i]) / rampLeft_;
+            }
+            const int steps = same ? 0 : nr;
+
             for (int ch = 0; ch < ch_; ch++) {
                 double* z = &state_[(static_cast<size_t>(ch) * stages_ + k) * 2];
                 double z1 = z[0], z2 = z[1];
-                for (int f = 0; f < frames; f++) {
+                double b0 = cc[0], b1 = cc[1], b2 = cc[2], a1 = cc[3], a2 = cc[4];
+                int f = 0;
+                for (; f < steps; f++) {
+                    b0 += d[0]; b1 += d[1]; b2 += d[2]; a1 += d[3]; a2 += d[4];
+                    double& x = w[static_cast<size_t>(f) * ch_ + ch];
+                    const double y = b0 * x + z1;
+                    z1 = b1 * x - a1 * y + z2;
+                    z2 = b2 * x - a2 * y;
+                    x = y;
+                }
+                if (!same && rampEnds) {  // rampa finita: da qui in poi i coefficienti sono esattamente quelli nuovi
+                    b0 = t[0]; b1 = t[1]; b2 = t[2]; a1 = t[3]; a2 = t[4];
+                }
+                for (; f < frames; f++) {
                     double& x = w[static_cast<size_t>(f) * ch_ + ch];
                     const double y = b0 * x + z1;
                     z1 = b1 * x - a1 * y + z2;
@@ -302,13 +428,29 @@ private:
                 z[0] = z1;
                 z[1] = z2;
             }
+
+            if (!same) {
+                if (rampEnds) {
+                    for (int i = 0; i < 5; i++) cc[i] = t[i];
+                    if (isIdentity(t)) {
+                        // stadio tornato neutro: azzera lo stato, così non "risorge" alla riattivazione
+                        for (int ch = 0; ch < ch_; ch++) {
+                            double* z = &state_[(static_cast<size_t>(ch) * stages_ + k) * 2];
+                            z[0] = 0.0; z[1] = 0.0;
+                        }
+                    }
+                } else {
+                    for (int i = 0; i < 5; i++) cc[i] += d[i] * nr;
+                }
+            }
         }
+        rampLeft_ -= nr;
 
         bool bad = false;
-        float* d = scratch_.data();
+        float* dst = scratch_.data();
         for (size_t i = 0; i < n; i++) {
             const double v = w[i];
-            if (!std::isfinite(v)) { bad = true; d[i] = 0.0f; } else d[i] = static_cast<float>(v);
+            if (!std::isfinite(v)) { bad = true; dst[i] = 0.0f; } else dst[i] = static_cast<float>(v);
         }
         if (bad) std::fill(state_.begin(), state_.end(), 0.0);  // filtro instabile: riparti da zero
     }
@@ -349,9 +491,9 @@ private:
     }
 
     int sr_ = 44100, ch_ = 2, stages_ = 0;
-    double pre_ = 1.0;
-    std::vector<double> coef_, state_, work_;
-    std::vector<uint8_t> active_;
+    double pre_ = 1.0, preCur_ = 1.0;
+    int rampLeft_ = 0;
+    std::vector<double> coef_, cur_, state_, work_;
     std::vector<float> scratch_, rsOut_;
     Resampler rs_;
     bool rsOn_ = false;

@@ -4,6 +4,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.cosh
+import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
@@ -35,6 +38,12 @@ data class EqConfig(
     val trebleFreq: Float = 10000f,
     val limiterOn: Boolean = true,
     val autoHeadroom: Boolean = false,
+    /**
+     * "Curva fedele": i cursori sono i valori che si vogliono ottenere sulla curva totale; i
+     * guadagni reali dei filtri vengono ricalcolati per compensare la sovrapposizione delle
+     * campane vicine (vedi [EqMath.fitGains]).
+     */
+    val faithful: Boolean = false,
     /** Soglia del limiter in dBFS (-12..0). */
     val limiterThresholdDb: Float = -0.5f,
     /** Rilascio del limiter in ms (20..500). */
@@ -83,6 +92,21 @@ data class EqConfig(
         return copy(gains = freqs.map { f -> interpolate(fs, gs, f).coerceIn(-GAIN_RANGE, GAIN_RANGE) })
     }
 
+    /** Guadagni realmente applicati ai filtri (con "curva fedele" sono ricalcolati). */
+    fun effectiveGains(fs: Double): List<Float> =
+        if (faithful && enabled && bandCount > 1) EqMath.fitGains(this, fs) else gains
+
+    /** Tipo di filtro di una banda: 0 = low shelf, 1 = high shelf, 2 = peaking. */
+    fun withType(index: Int, type: Int): EqConfig {
+        if (index !in 0 until bandCount) return this
+        val list = MutableList(bandCount) { typeAt(it) }
+        list[index] = type.coerceIn(0, 2)
+        return copy(types = if (list.all { it == 2 }) emptyList() else list)
+    }
+
+    /** Preamp scelto a mano. */
+    fun withPreamp(db: Float): EqConfig = copy(preampDb = db.coerceIn(-GAIN_RANGE, GAIN_RANGE))
+
     /** Q effettivo di una banda. */
     fun qFor(index: Int): Double = (qs.getOrNull(index) ?: 1f).toDouble().coerceIn(MIN_Q.toDouble(), MAX_Q.toDouble())
 
@@ -122,8 +146,8 @@ data class EqConfig(
     /** Solo il contributo delle manopole Bassi/Alti (il Tono è separato dall'equalizzatore). */
     fun toneResponseDb(f: Double, fs: Double = 48000.0): Double {
         var t = 0.0
-        if (bassPercent != 0) t += EqMath.magnitudeDb(EqMath.lowShelf(fs, bassFreq.toDouble(), EqMath.toneDb(bassPercent)), fs, f)
-        if (treblePercent != 0) t += EqMath.magnitudeDb(EqMath.highShelf(fs, trebleFreq.toDouble(), EqMath.toneDb(treblePercent)), fs, f)
+        if (bassPercent != 0) for (c in EqMath.bassStages(this, fs)) t += EqMath.magnitudeDb(c, fs, f)
+        if (treblePercent != 0) for (c in EqMath.trebleStages(this, fs)) t += EqMath.magnitudeDb(c, fs, f)
         return t
     }
 
@@ -138,6 +162,7 @@ data class EqConfig(
         o.put("toneV", 3)
         o.put("limiter", limiterOn)
         o.put("autoHeadroom", autoHeadroom)
+        o.put("faithful", faithful)
         o.put("limThr", limiterThresholdDb.toDouble())
         o.put("limRel", limiterReleaseMs.toDouble())
         o.put("preamp", preampDb.toDouble())
@@ -258,6 +283,7 @@ data class EqConfig(
                     trebleFreq = o.optDouble("trebleFreq", 10000.0).toFloat(),
                     limiterOn = o.optBoolean("limiter", true),
                     autoHeadroom = o.optBoolean("autoHeadroom", false),
+                    faithful = o.optBoolean("faithful", false),
                     limiterThresholdDb = o.optDouble("limThr", -0.5).toFloat().coerceIn(-12f, 0f),
                     limiterReleaseMs = o.optDouble("limRel", 80.0).toFloat().coerceIn(20f, 500f),
                 )
@@ -290,7 +316,7 @@ object EqPresets {
     )
 }
 
-/** Matematica dei filtri biquad (formule dell'Audio EQ Cookbook). */
+/** Matematica dei filtri biquad (Audio EQ Cookbook + variante matched, vedi sotto). */
 object EqMath {
     /** Coefficienti normalizzati: b0, b1, b2, a1, a2. */
     class Coef(val b0: Double, val b1: Double, val b2: Double, val a1: Double, val a2: Double)
@@ -300,8 +326,190 @@ object EqMath {
     private fun norm(b0: Double, b1: Double, b2: Double, a0: Double, a1: Double, a2: Double) =
         Coef(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
 
-    fun peaking(fs: Double, f: Double, q: Double, gainDb: Double): Coef {
-        if (kotlin.math.abs(gainDb) < 0.01) return IDENTITY
+    private fun bandCoef(type: Int, fs: Double, f: Double, q: Double, g: Double): Coef = when (type) {
+        0 -> lowShelf(fs, f, g)
+        1 -> highShelf(fs, f, g)
+        else -> peaking(fs, f, q, g)
+    }
+
+    private data class FitKey(
+        val fs: Double, val freqs: List<Float>, val qs: List<Float>, val types: List<Int>, val targets: List<Float>,
+    )
+
+    @Volatile
+    private var fitCache: Pair<FitKey, List<Float>>? = null
+
+    /** Risolve A x = b (eliminazione di Gauss con pivot parziale). Null se singolare. */
+    private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
+        val n = b.size
+        for (col in 0 until n) {
+            var piv = col
+            for (r in col + 1 until n) if (kotlin.math.abs(a[r][col]) > kotlin.math.abs(a[piv][col])) piv = r
+            if (kotlin.math.abs(a[piv][col]) < 1e-12) return null
+            if (piv != col) {
+                val t = a[piv]; a[piv] = a[col]; a[col] = t
+                val tb = b[piv]; b[piv] = b[col]; b[col] = tb
+            }
+            for (r in col + 1 until n) {
+                val k = a[r][col] / a[col][col]
+                if (k == 0.0) continue
+                for (c in col until n) a[r][c] -= k * a[col][c]
+                b[r] -= k * b[col]
+            }
+        }
+        val x = DoubleArray(n)
+        for (r in n - 1 downTo 0) {
+            var sum = b[r]
+            for (c in r + 1 until n) sum -= a[r][c] * x[c]
+            x[r] = sum / a[r][r]
+        }
+        return x
+    }
+
+    /**
+     * "Curva fedele": trova i guadagni dei filtri per cui la curva TOTALE delle bande (senza
+     * manopole né preamp) passa esattamente dai valori dei cursori alle frequenze delle bande.
+     * Le campane vicine si sommano, quindi senza compensazione due bande a +6 dB danno più di
+     * +6 dB fra l'una e l'altra. Metodo: Newton con jacobiano numerico, passo smorzato (ridge) per
+     * non esplodere quando le bande sono molto sovrapposte; i guadagni restano entro +-GAIN_RANGE.
+     */
+    fun fitGains(cfg: EqConfig, fs: Double): List<Float> {
+        val key = FitKey(fs, cfg.freqs, cfg.qs, cfg.types, cfg.gains)
+        fitCache?.let { if (it.first == key) return it.second }
+        val n = cfg.bandCount
+        val limit = fs * 0.45
+        val f = DoubleArray(n) { cfg.freqs[it].toDouble() }
+        val active = BooleanArray(n) { f[it] < limit }
+        val target = DoubleArray(n) { cfg.gains[it].toDouble() }
+        val g = target.copyOf()
+        val range = EqConfig.GAIN_RANGE.toDouble()
+        val h = 0.25
+        for (iter in 0 until 12) {
+            val coefs = Array(n) { j -> if (active[j]) bandCoef(cfg.typeAt(j), fs, f[j], cfg.qFor(j), g[j]) else IDENTITY }
+            val r = DoubleArray(n)
+            var worst = 0.0
+            for (i in 0 until n) {
+                if (!active[i]) continue
+                var tot = 0.0
+                for (j in 0 until n) tot += magnitudeDb(coefs[j], fs, f[i])
+                r[i] = target[i] - tot
+                worst = maxOf(worst, kotlin.math.abs(r[i]))
+            }
+            if (worst < 0.005) break
+            val jac = Array(n) { DoubleArray(n) }
+            for (j in 0 until n) {
+                if (!active[j]) continue
+                val cp = bandCoef(cfg.typeAt(j), fs, f[j], cfg.qFor(j), g[j] + h)
+                val cm = bandCoef(cfg.typeAt(j), fs, f[j], cfg.qFor(j), g[j] - h)
+                for (i in 0 until n) if (active[i]) jac[i][j] = (magnitudeDb(cp, fs, f[i]) - magnitudeDb(cm, fs, f[i])) / (2 * h)
+            }
+            // equazioni normali con ridge: (J'J + lambda I) d = J' r
+            val a = Array(n) { DoubleArray(n) }
+            val b = DoubleArray(n)
+            for (p in 0 until n) {
+                for (q in 0 until n) {
+                    var sum = 0.0
+                    for (i in 0 until n) sum += jac[i][p] * jac[i][q]
+                    a[p][q] = sum
+                }
+                a[p][p] += 1e-3
+                var sb = 0.0
+                for (i in 0 until n) sb += jac[i][p] * r[i]
+                b[p] = sb
+            }
+            val d = solve(a, b) ?: break
+            for (j in 0 until n) {
+                if (!active[j]) continue
+                g[j] = (g[j] + d[j].coerceIn(-6.0, 6.0)).coerceIn(-range, range)
+            }
+        }
+        val result = List(n) { g[it].toFloat() }
+        fitCache = key to result
+        return result
+    }
+
+    // ---- Progetto dei filtri
+    //
+    // Per ogni filtro si calcolano due candidati: la forma classica dell'Audio EQ Cookbook (RBJ) e
+    // una forma "matched" (poli dal matched-z, zeri imposti con tre vincoli di modulo a DC, f0 e
+    // Nyquist, come nella letteratura sui filtri digitali che imitano il prototipo analogico).
+    // Vince il candidato con l'errore massimo minore rispetto alla curva analogica ideale
+    // (20 Hz .. 0,45*fs). Così non peggiora mai: vicino a Nyquist il RBJ "si schiaccia" fino a 8 dB.
+
+    private const val ERR_POINTS = 48
+
+    /** Modulo del prototipo analogico a f/f0 = x per il rinforzo A (A<1 = taglio). */
+    private fun analogPeaking(a: Double, q: Double, x: Double): Double {
+        val re = 1.0 - x * x
+        val n = hypot(re, x * a / q)
+        val d = hypot(re, x / (a * q))
+        return n / d
+    }
+
+    private fun analogShelf(a: Double, invQ: Double, low: Boolean, x: Double): Double {
+        val rq = sqrt(a) * invQ * x
+        val x2 = x * x
+        return if (low) a * hypot(a - x2, rq) / hypot(1.0 - a * x2, rq)
+        else a * hypot(1.0 - a * x2, rq) / hypot(a - x2, rq)
+    }
+
+    private fun maxErrDb(c: Coef, fs: Double, f0: Double, analog: (Double) -> Double): Double {
+        var worst = 0.0
+        val top = fs * 0.45
+        for (i in 0 until ERR_POINTS) {
+            val f = 20.0 * (top / 20.0).pow(i.toDouble() / (ERR_POINTS - 1))
+            val ref = 20.0 * log10(analog(f / f0))
+            val d = magnitudeDb(c, fs, f)
+            worst = maxOf(worst, kotlin.math.abs(d - ref))
+        }
+        return worst
+    }
+
+    private fun isStable(c: Coef): Boolean =
+        c.b0.isFinite() && c.b1.isFinite() && c.b2.isFinite() && c.a1.isFinite() && c.a2.isFinite() &&
+            kotlin.math.abs(c.a2) < 1.0 && kotlin.math.abs(c.a1) < 1.0 + c.a2
+
+    private fun invert(c: Coef) = Coef(1.0 / c.b0, c.a1 / c.b0, c.a2 / c.b0, c.b1 / c.b0, c.b2 / c.b0)
+
+    /** Filtro "matched" per un rinforzo (A >= 1). Null se non realizzabile. */
+    private fun matched(fs: Double, f0: Double, zeta: Double, wpRatio: Double, analog: (Double) -> Double): Coef? {
+        val w0 = 2.0 * PI * f0 / fs
+        val th = wpRatio * w0
+        val e = exp(-zeta * th)
+        val a1 = if (zeta < 1.0) -2.0 * e * cos(sqrt(1.0 - zeta * zeta) * th)
+        else -2.0 * e * cosh(sqrt(zeta * zeta - 1.0) * th)
+        val a2 = e * e
+        val ca0 = (1.0 + a1 + a2).let { it * it }
+        val ca1 = (1.0 - a1 + a2).let { it * it }
+        val ca2 = -4.0 * a2
+        fun phi1(w: Double) = sin(w / 2.0).let { it * it }
+        val pc1 = phi1(w0)
+        val pc0 = 1.0 - pc1
+        val pc2 = 4.0 * pc0 * pc1
+        val aw0 = ca0 * pc0 + ca1 * pc1 + ca2 * pc2
+        val m0 = analog(0.0).let { it * it }
+        val mc = analog(1.0).let { it * it }
+        val mn = analog(PI / w0).let { it * it }
+        val bb0 = ca0 * m0
+        val bb1 = ca1 * mn
+        val bb2 = (aw0 * mc - bb0 * pc0 - bb1 * pc1) / pc2
+        if (!(bb0 > 0.0 && bb1 > 0.0)) return null
+        val s0 = sqrt(bb0)
+        val s1 = sqrt(bb1)
+        val w = 0.5 * (s0 + s1)
+        val disc = w * w + bb2
+        if (!(disc >= 0.0)) return null
+        val b0 = 0.5 * (w + sqrt(disc))
+        val c = Coef(b0, 0.5 * (s0 - s1), w - b0, a1, a2)
+        return if (isStable(c)) c else null
+    }
+
+    private fun pickBest(fs: Double, f0: Double, rbj: Coef, m: Coef?, analog: (Double) -> Double): Coef {
+        if (m == null) return rbj
+        return if (maxErrDb(m, fs, f0, analog) < maxErrDb(rbj, fs, f0, analog) - 1e-6) m else rbj
+    }
+
+    private fun rbjPeaking(fs: Double, f: Double, q: Double, gainDb: Double): Coef {
         val a = 10.0.pow(gainDb / 40.0)
         val w0 = 2.0 * PI * f / fs
         val alpha = sin(w0) / (2.0 * q)
@@ -312,31 +520,31 @@ object EqMath {
         )
     }
 
-    fun lowShelf(fs: Double, f: Double, gainDb: Double): Coef {
+    fun peaking(fs: Double, f: Double, q: Double, gainDb: Double): Coef {
         if (kotlin.math.abs(gainDb) < 0.01) return IDENTITY
+        val rbj = rbjPeaking(fs, f, q, gainDb)
+        val a = 10.0.pow(gainDb / 40.0)
+        val g = kotlin.math.abs(gainDb)
+        val ab = 10.0.pow(g / 40.0)
+        val boost = matched(fs, f, 1.0 / (2.0 * ab * q), 1.0) { x -> analogPeaking(ab, q, x) }
+        val m = if (gainDb < 0.0) boost?.let { invert(it) } else boost
+        return pickBest(fs, f, rbj, m) { x -> analogPeaking(a, q, x) }
+    }
+
+    private fun rbjShelf(fs: Double, f: Double, gainDb: Double, slope: Double, low: Boolean): Coef {
         val a = 10.0.pow(gainDb / 40.0)
         val w0 = 2.0 * PI * f / fs
         val c = cos(w0)
-        val alpha = sin(w0) / 2.0 * sqrt(2.0)
+        val alpha = sin(w0) / 2.0 * sqrt((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0)
         val sa = 2.0 * sqrt(a) * alpha
-        return norm(
+        return if (low) norm(
             a * ((a + 1) - (a - 1) * c + sa),
             2.0 * a * ((a - 1) - (a + 1) * c),
             a * ((a + 1) - (a - 1) * c - sa),
             (a + 1) + (a - 1) * c + sa,
             -2.0 * ((a - 1) + (a + 1) * c),
             (a + 1) + (a - 1) * c - sa
-        )
-    }
-
-    fun highShelf(fs: Double, f: Double, gainDb: Double): Coef {
-        if (kotlin.math.abs(gainDb) < 0.01) return IDENTITY
-        val a = 10.0.pow(gainDb / 40.0)
-        val w0 = 2.0 * PI * f / fs
-        val c = cos(w0)
-        val alpha = sin(w0) / 2.0 * sqrt(2.0)
-        val sa = 2.0 * sqrt(a) * alpha
-        return norm(
+        ) else norm(
             a * ((a + 1) + (a - 1) * c + sa),
             -2.0 * a * ((a - 1) + (a + 1) * c),
             a * ((a + 1) + (a - 1) * c - sa),
@@ -346,36 +554,81 @@ object EqMath {
         )
     }
 
+    private fun shelf(fs: Double, f: Double, gainDb: Double, slope: Double, low: Boolean): Coef {
+        if (kotlin.math.abs(gainDb) < 0.01) return IDENTITY
+        val rbj = rbjShelf(fs, f, gainDb, slope, low)
+        val a = 10.0.pow(gainDb / 40.0)
+        val ab = 10.0.pow(kotlin.math.abs(gainDb) / 40.0)
+        val invQ = sqrt((ab + 1.0 / ab) * (1.0 / slope - 1.0) + 2.0)
+        val wp = if (low) 1.0 / sqrt(ab) else sqrt(ab)
+        val boost = matched(fs, f, invQ / 2.0, wp) { x -> analogShelf(ab, invQ, low, x) }
+        val m = if (gainDb < 0.0) boost?.let { invert(it) } else boost
+        val invQa = sqrt((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0)
+        return pickBest(fs, f, rbj, m) { x -> analogShelf(a, invQa, low, x) }
+    }
+
+    /**
+     * [slope] = parametro S dell'Audio EQ Cookbook: 1 = pendenza massima senza sovraelongazione
+     * (valore storico), sotto 1 la transizione è più dolce e larga.
+     */
+    fun lowShelf(fs: Double, f: Double, gainDb: Double, slope: Double = 1.0): Coef =
+        shelf(fs, f, gainDb, slope, true)
+
+    fun highShelf(fs: Double, f: Double, gainDb: Double, slope: Double = 1.0): Coef =
+        shelf(fs, f, gainDb, slope, false)
+
     /** Posizione delle manopole -> dB (0..100, 50 = 0 dB, estremi = -12 / +12 dB). */
     /** Manopole Bassi/Alti: 0..100 = 0..+10 dB (solo rinforzo). */
     fun toneDb(percent: Int): Double = percent.coerceIn(0, 100) / 10.0
 
     /**
-     * Elenco fisso di stadi: [bassi, banda 0..N-1, alti].
+     * Stadi delle manopole Bassi: [shelf morbida, "corpo" nei medio-bassi].
+     * Gli stadi neutri valgono IDENTITY. Vedi [ToneVoicing] per la voce scelta.
+     */
+    fun bassStages(cfg: EqConfig, fs: Double): List<Coef> {
+        val limit = fs * 0.45
+        val db = toneDb(cfg.bassPercent)
+        val f = cfg.bassFreq.toDouble()
+        val bodyF = ToneVoicing.bassBodyFreq(f)
+        return listOf(
+            if (f < limit) lowShelf(fs, f, db, ToneVoicing.BASS_SLOPE) else IDENTITY,
+            if (bodyF < limit) peaking(fs, bodyF, ToneVoicing.BASS_BODY_Q, db * ToneVoicing.BASS_BODY_RATIO) else IDENTITY,
+        )
+    }
+
+    /** Stadi delle manopole Alti: [pulizia dei medio-bassi, shelf netta, "aria"]. */
+    fun trebleStages(cfg: EqConfig, fs: Double): List<Coef> {
+        val limit = fs * 0.45
+        val db = toneDb(cfg.treblePercent)
+        val f = cfg.trebleFreq.toDouble()
+        val airF = ToneVoicing.trebleAirFreq(f)
+        return listOf(
+            peaking(fs, ToneVoicing.CLEAN_FREQ, ToneVoicing.CLEAN_Q, db * ToneVoicing.TREBLE_CLEAN_RATIO),
+            if (f < limit) highShelf(fs, f, db, ToneVoicing.TREBLE_SLOPE) else IDENTITY,
+            if (airF < limit) peaking(fs, airF, ToneVoicing.TREBLE_AIR_Q, db * ToneVoicing.TREBLE_AIR_RATIO) else IDENTITY,
+        )
+    }
+
+    /** Numero di stadi fissi: [bassi x2, banda 0..N-1, alti x3]. */
+    fun stageCount(bandCount: Int): Int = bandCount + 5
+
+    /**
+     * Elenco fisso di stadi: [bassi x2, banda 0..N-1, alti x3].
      * Gli stadi neutri valgono IDENTITY, così la struttura non cambia mentre si regola.
      */
     fun stages(cfg: EqConfig, fs: Double): List<Coef> {
         val nyquistLimit = fs * 0.45
-        val out = ArrayList<Coef>(cfg.bandCount + 2)
-        out.add(
-            if (cfg.bassFreq < nyquistLimit)
-                lowShelf(fs, cfg.bassFreq.toDouble(), toneDb(cfg.bassPercent)) else IDENTITY
-        )
+        val out = ArrayList<Coef>(stageCount(cfg.bandCount))
+        out.addAll(bassStages(cfg, fs))
+        val gains = cfg.effectiveGains(fs)
         for (i in 0 until cfg.bandCount) {
             val f = cfg.freqs[i].toDouble()
             out.add(
-                if (cfg.enabled && f < nyquistLimit)
-                    when (cfg.typeAt(i)) {
-                        0 -> lowShelf(fs, f, cfg.gains[i].toDouble())
-                        1 -> highShelf(fs, f, cfg.gains[i].toDouble())
-                        else -> peaking(fs, f, cfg.qFor(i), cfg.gains[i].toDouble())
-                    } else IDENTITY
+                if (cfg.enabled && f < nyquistLimit) bandCoef(cfg.typeAt(i), fs, f, cfg.qFor(i), gains[i].toDouble())
+                else IDENTITY
             )
         }
-        out.add(
-            if (cfg.trebleFreq < nyquistLimit)
-                highShelf(fs, cfg.trebleFreq.toDouble(), toneDb(cfg.treblePercent)) else IDENTITY
-        )
+        out.addAll(trebleStages(cfg, fs))
         return out
     }
 
@@ -394,4 +647,34 @@ object EqMath {
         if (den <= 0.0 || num <= 0.0) return 0.0
         return 10.0 * log10(num / den)
     }
+}
+
+/**
+ * Voce delle manopole Bassi e Alti. Ogni manopola non è una semplice shelf: aggiunge piccoli
+ * stadi che ne cambiano il carattere. Tutti i valori sono qui, per poterli ritoccare all'orecchio.
+ *
+ * Bassi "caldi": shelf morbida (pendenza dolce, niente scalino) più una campana larga a 90-220 Hz
+ * che dà corpo, circa il 30% del guadagno della shelf.
+ *
+ * Alti "freddi": shelf netta, una campana d'"aria" sopra i 9 kHz (circa il 30% del guadagno) e un
+ * leggero taglio attorno ai 320 Hz (12% del guadagno, al massimo -1,2 dB) che toglie un po' di
+ * calore e rende il suono più pulito e brillante.
+ */
+object ToneVoicing {
+    const val BASS_SLOPE = 0.75
+    const val BASS_BODY_RATIO = 0.30
+    const val BASS_BODY_Q = 0.6
+
+    const val TREBLE_SLOPE = 1.0
+    const val TREBLE_AIR_RATIO = 0.30
+    const val TREBLE_AIR_Q = 0.8
+    const val TREBLE_CLEAN_RATIO = -0.12
+    const val CLEAN_FREQ = 320.0
+    const val CLEAN_Q = 0.7
+
+    /** Frequenza del "corpo": circa un'ottava sopra la shelf, tra 90 e 220 Hz. */
+    fun bassBodyFreq(bassFreq: Double): Double = (bassFreq * 2.0).coerceIn(90.0, 220.0)
+
+    /** Frequenza dell'"aria": circa 1,6 volte la shelf, tra 9 e 16 kHz. */
+    fun trebleAirFreq(trebleFreq: Double): Double = (trebleFreq * 1.6).coerceIn(9000.0, 16000.0)
 }
