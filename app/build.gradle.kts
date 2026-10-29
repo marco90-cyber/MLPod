@@ -28,11 +28,24 @@ android {
         }
     }
 
+    // Firma privata: il keystore arriva dai segreti di GitHub (KEYSTORE_BASE64 decodificato dal workflow).
+    // Se i segreti non ci sono, si usa la chiave di debug.
+    val ksFile = System.getenv("MLPOD_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (ksFile != null) {
+            create("private") {
+                storeFile = ksFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Firmato con la chiave di debug: l'APK è subito installabile sul telefono.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (ksFile != null) signingConfigs.getByName("private") else signingConfigs.getByName("debug")
         }
     }
 

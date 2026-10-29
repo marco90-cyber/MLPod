@@ -196,9 +196,26 @@ fun AppEnv.settingsScreen(): MenuScreen = MenuScreen("Impostazioni") {
         MenuItem("Libreria", chevron = true) { nav.push(libraryScreen()) },
         MenuItem("Equalizzatore", chevron = true) { overlay = Overlay.Equalizer },
         MenuItem("Riproduzione", chevron = true) { nav.push(playbackScreen()) },
+        MenuItem("Aggiornamenti", chevron = true) { nav.push(updateScreen()); com.marco.mlpod.update.Updater.check() },
         MenuItem("Debug", chevron = true) { nav.push(debugScreen()) },
         MenuItem("Informazioni", chevron = true) { nav.push(aboutScreen()) },
     )
+}
+
+fun AppEnv.updateScreen(): MenuScreen = MenuScreen("Aggiornamenti") {
+    val u = com.marco.mlpod.update.Updater
+    val r = u.latest
+    buildList {
+        add(MenuItem("Cerca aggiornamenti", sub = u.status, dimmed = u.checking) { u.check() })
+        add(info("Versione installata", "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})"))
+        if (r != null) add(info("Ultima su GitHub", "${r.name} (build ${r.build})"))
+        if (r != null && u.updateAvailable) {
+            add(MenuItem("Scarica e installa", sub = "Apre il download dell'APK", chevron = true) {
+                actions?.openUrl(r.apkUrl ?: r.pageUrl)
+            })
+        }
+        if (r != null) add(MenuItem("Pagina della release", chevron = true) { actions?.openUrl(r.pageUrl) })
+    }
 }
 
 fun AppEnv.appearanceScreen(): MenuScreen = MenuScreen("Aspetto") {
