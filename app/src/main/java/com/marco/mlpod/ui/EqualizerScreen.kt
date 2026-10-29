@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.marco.mlpod.audio.EqConfig
+import com.marco.mlpod.audio.ReplayGain
 import com.marco.mlpod.audio.EqMath
 import com.marco.mlpod.audio.EqPresets
 import java.util.Locale
@@ -270,6 +271,7 @@ fun EqualizerScreen(env: AppEnv) {
             ) {
                 ModeButton("Eq.", mode == 0, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 0 }
                 ModeButton("Tono", mode == 1, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 1 }
+                ModeButton("Stereo", mode == 4, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 4 }
                 ModeButton("Param.", mode == 3, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 3 }
                 ModeButton("Limite", mode == 2, Modifier.weight(1f)) { env.feedback.tapScreen(); mode = 2 }
             }
@@ -317,6 +319,7 @@ fun EqualizerScreen(env: AppEnv) {
                         0 -> BandsPanel(env, eq)
                         1 -> TonePanel(env, eq) { target = it }
                         3 -> ParamsPanel(env, eq)
+                        4 -> StereoPanel(env, eq)
                         else -> LimiterPanel(env, eq)
                     }
                 }
@@ -590,29 +593,115 @@ private fun BandsPanel(env: AppEnv, eq: EqConfig) {
     }
 }
 
-/** Modalità "Tono": manopole Bassi / Alti. */
+/** Modalità "Tono": manopole Bassi / Alti e headroom. */
 @Composable
 private fun TonePanel(env: AppEnv, eq: EqConfig, onFreq: (FreqTarget) -> Unit) {
     val settings = env.settings
-    Row(
-        Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        ToneKnob(
-            title = "Bassi caldi", percent = eq.bassPercent, freq = eq.bassFreq, color = BassColor,
-            onTick = { env.feedback.tapScreen() },
-            onDetent = { env.feedback.detent() },
-            onChange = { v -> settings.updateEq { it.copy(bassPercent = v) } },
-            onFreqClick = { onFreq(FreqTarget.Bass) },
-        )
-        ToneKnob(
-            title = "Alti freddi", percent = eq.treblePercent, freq = eq.trebleFreq, color = Accent,
-            onTick = { env.feedback.tapScreen() },
-            onDetent = { env.feedback.detent() },
-            onChange = { v -> settings.updateEq { it.copy(treblePercent = v) } },
-            onFreqClick = { onFreq(FreqTarget.Treble) },
-        )
+    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 6.dp)) {
+        Row(
+            Modifier.fillMaxWidth().weight(1f),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ToneKnob(
+                title = "Bassi caldi", percent = eq.bassPercent, freq = eq.bassFreq, color = BassColor,
+                onTick = { env.feedback.tapScreen() },
+                onDetent = { env.feedback.detent() },
+                onChange = { v -> settings.updateEq { it.copy(bassPercent = v) } },
+                onFreqClick = { onFreq(FreqTarget.Bass) },
+            )
+            ToneKnob(
+                title = "Alti freddi", percent = eq.treblePercent, freq = eq.trebleFreq, color = Accent,
+                onTick = { env.feedback.tapScreen() },
+                onDetent = { env.feedback.detent() },
+                onChange = { v -> settings.updateEq { it.copy(treblePercent = v) } },
+                onFreqClick = { onFreq(FreqTarget.Treble) },
+            )
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val peak = eq.tonePeakDb()
+            Text("Headroom", color = Color.White, fontSize = 14.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (!eq.toneHeadroom) "spento" else if (peak < 0.05) "automatico"
+                else String.format(Locale.ITALY, "-%.1f dB", peak),
+                color = Color(0xFF7C828C), fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f)
+            )
+            NeonSwitch(
+                checked = eq.toneHeadroom,
+                onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { it.copy(toneHeadroom = on) } }
+            )
+        }
+    }
+}
+
+/** Modalità "Stereo": bilanciamento, espansione e mono/stereo. */
+@Composable
+private fun StereoPanel(env: AppEnv, eq: EqConfig) {
+    val settings = env.settings
+    Column(Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)).background(PanelColor).padding(vertical = 6.dp)) {
+        Row(
+            Modifier.fillMaxWidth().weight(1f),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val bal = eq.balance
+            StereoKnob(
+                title = "Bilanciamento",
+                valueText = when {
+                    bal == 0 -> "Centro"
+                    bal < 0 -> "S ${-bal}%"
+                    else -> "D $bal%"
+                },
+                knob = (bal + 100) / 2, color = BassColor,
+                onTick = { env.feedback.tapScreen() }, onDetent = { env.feedback.detent() },
+                onChange = { v -> settings.updateEq { it.copy(balance = ((v - 50) * 2).coerceIn(-100, 100)) } },
+                onReset = { env.feedback.tapScreen(); settings.updateEq { it.copy(balance = 0) } },
+            )
+            StereoKnob(
+                title = "Espansione",
+                valueText = if (eq.mono) "Mono" else "${eq.stereoWidth}%",
+                knob = eq.stereoWidth / 2, color = Accent,
+                onTick = { env.feedback.tapScreen() }, onDetent = { env.feedback.detent() },
+                onChange = { v -> settings.updateEq { it.copy(stereoWidth = (v * 2).coerceIn(0, 200), mono = false) } },
+                onReset = { env.feedback.tapScreen(); settings.updateEq { it.copy(stereoWidth = 100) } },
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Chip("Stereo", selected = !eq.mono) { env.feedback.tapScreen(); settings.updateEq { it.copy(mono = false) } }
+            Chip("Mono", selected = eq.mono) { env.feedback.tapScreen(); settings.updateEq { it.copy(mono = true) } }
+        }
+    }
+}
+
+@Composable
+private fun StereoKnob(
+    title: String,
+    valueText: String,
+    knob: Int,
+    color: Color,
+    onTick: () -> Unit,
+    onDetent: () -> Unit,
+    onChange: (Int) -> Unit,
+    onReset: () -> Unit,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(valueText, color = Color(0xFF9AA0AA), fontSize = 13.sp)
+        Spacer(Modifier.height(4.dp))
+        Knob(value = knob, color = color, size = 68.dp, onTick = onTick, onDetent = onDetent, zero = 50, stepSize = 5, onChange = onChange)
+        Spacer(Modifier.height(4.dp))
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .background(ChipColor)
+                .clickable(onClick = onReset)
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+        ) { Text("Azzera", color = Color.White, fontSize = 12.sp) }
     }
 }
 
@@ -647,6 +736,24 @@ private fun ParamsPanel(env: AppEnv, eq: EqConfig) {
                 checked = eq.faithful,
                 onCheckedChange = { on -> env.feedback.tapScreen(); settings.updateEq { it.copy(faithful = on) } }
             )
+        }
+        Column {
+            Text("ReplayGain", color = Color.White, fontSize = 14.sp)
+            val rg = env.engine.eqProcessor.info.replayGainDb
+            Text(
+                when {
+                    eq.replayGain == ReplayGain.OFF -> "Livella i brani con i tag del file"
+                    rg == null -> "Nessun tag nel brano attuale"
+                    else -> String.format(Locale.ITALY, "Brano attuale: %+.1f dB", rg)
+                },
+                color = Color(0xFF7C828C), fontSize = 11.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("Spento", eq.replayGain == ReplayGain.OFF) { env.feedback.tapScreen(); settings.updateEq { it.copy(replayGain = ReplayGain.OFF) } }
+                Chip("Brano", eq.replayGain == ReplayGain.TRACK) { env.feedback.tapScreen(); settings.updateEq { it.copy(replayGain = ReplayGain.TRACK) } }
+                Chip("Album", eq.replayGain == ReplayGain.ALBUM) { env.feedback.tapScreen(); settings.updateEq { it.copy(replayGain = ReplayGain.ALBUM) } }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Preamp", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -798,22 +905,22 @@ private fun ToneKnob(
     onFreqClick: () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Text(
             "$percent%  (+" + String.format(Locale.ITALY, "%.1f", EqMath.toneDb(percent)) + " dB)",
-            color = Color(0xFF9AA0AA), fontSize = 14.sp
+            color = Color(0xFF9AA0AA), fontSize = 12.sp
         )
-        Spacer(Modifier.height(6.dp))
-        Knob(value = percent, color = color, size = 84.dp, onTick = onTick, onDetent = onDetent, zero = 0, stepSize = 10, onChange = onChange)
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
+        Knob(value = percent, color = color, size = 70.dp, onTick = onTick, onDetent = onDetent, zero = 0, stepSize = 10, onChange = onChange)
+        Spacer(Modifier.height(4.dp))
         Box(
             Modifier
                 .clip(RoundedCornerShape(50))
                 .background(ChipColor)
                 .clickable(onClick = onFreqClick)
-                .padding(horizontal = 14.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
-            Text("Freq ${fmtFreqLong(freq)}", color = Color.White, fontSize = 13.sp)
+            Text("Freq ${fmtFreqLong(freq)}", color = Color.White, fontSize = 13.sp, maxLines = 1)
         }
     }
 }
