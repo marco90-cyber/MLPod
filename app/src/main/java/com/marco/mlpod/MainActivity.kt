@@ -59,7 +59,12 @@ class MainActivity : ComponentActivity(), Actions {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        setContent { IpodApp(env) }
+        setContent {
+            IpodApp(env)
+            androidx.compose.material3.MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme()) {
+                AppUpdateHost()
+            }
+        }
     }
 
     override fun onDestroy() {

@@ -210,8 +210,8 @@ fun AppEnv.updateScreen(): MenuScreen = MenuScreen("Aggiornamenti") {
         add(info("Versione installata", "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})"))
         if (r != null) add(info("Ultima su GitHub", "${r.name} (build ${r.build})"))
         if (r != null && u.updateAvailable) {
-            add(MenuItem("Scarica e installa", sub = "Apre il download dell'APK", chevron = true) {
-                actions?.openUrl(r.apkUrl ?: r.pageUrl)
+            add(MenuItem("Scarica e installa", sub = "Download con pausa e ripresa", chevron = true) {
+                com.marco.mlpod.AppUpdate.open(app)
             })
         }
         if (r != null) add(MenuItem("Pagina della release", chevron = true) { actions?.openUrl(r.pageUrl) })
