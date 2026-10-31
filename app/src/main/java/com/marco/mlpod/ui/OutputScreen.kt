@@ -94,7 +94,7 @@ fun OutputScreen(env: AppEnv) {
     }
     val limiterDb by produceState(0f) {
         while (true) {
-            value = env.engine.eqProcessor.limiterReductionDb(true)
+            value = env.engine.eqProcessor.meters().limiterDb
             delay(600)
         }
     }
@@ -169,7 +169,7 @@ fun OutputScreen(env: AppEnv) {
             }
 
             Section("Elaborazione DSP") {
-                KV("Preamp effettivo", String.format(Locale.ITALY, "%+.1f dB", info.preampDb))
+                KV("Guadagno in ingresso", String.format(Locale.ITALY, "%+.1f dB", info.inputGainDb))
                 KV("ReplayGain", info.replayGainDb?.let { String.format(Locale.ITALY, "%+.1f dB", it) } ?: "non applicato")
                 KV("Latenza del limiter", if (info.limiter) String.format(Locale.ITALY, "%.1f ms", info.latencyMs) else "limiter spento")
                 if (info.limiter) {

@@ -5,7 +5,8 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.marco.mlpod.audio.EqConfig
+import com.marco.mlpod.audio.DspSettings
+import com.marco.mlpod.audio.EqPart
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.properties.ReadWriteProperty
@@ -53,7 +54,7 @@ class StringPref(private val sp: SharedPreferences, private val key: String, def
 }
 
 /** Preset dell'equalizzatore salvato dall'utente (configurazione completa). */
-data class UserPreset(val name: String, val config: EqConfig)
+data class UserPreset(val name: String, val part: EqPart)
 
 class Settings(context: Context) {
     private val sp: SharedPreferences =
@@ -114,42 +115,56 @@ class Settings(context: Context) {
     var verboseLog by BoolPref(sp, "verbose_log", false)
 
     // Equalizzatore
-    private var eqState by mutableStateOf(EqConfig.fromJson(sp.getString("eq", null)))
+    /** Loudness misurata dei brani senza tag ReplayGain. */
+    val loudnessCache = com.marco.mlpod.audio.LoudnessCache(sp)
 
-    var onEqChanged: ((EqConfig) -> Unit)? = null
+    private var dspState by mutableStateOf(
+        DspSettings.fromJson(sp.getString("dsp", null) ?: sp.getString("eq", null))
+    )
 
-    var eq: EqConfig
-        get() = eqState
+    var onDspChanged: ((DspSettings) -> Unit)? = null
+
+    var dsp: DspSettings
+        get() = dspState
         set(v) {
-            eqState = v
-            sp.edit().putString("eq", v.toJson()).apply()
-            onEqChanged?.invoke(v)
+            dspState = v
+            sp.edit().putString("dsp", v.toJson().toString()).apply()
+            onDspChanged?.invoke(v)
         }
 
-    fun updateEq(block: (EqConfig) -> EqConfig) {
-        eq = block(eqState)
+    fun updateDsp(block: (DspSettings) -> DspSettings) {
+        dsp = block(dspState)
     }
 
-    // Preset utente
+    // Preset utente (solo la parte equalizzatore)
     private var presetsRaw by StringPref(sp, "eq_user_presets", "[]")
 
     val userPresets: List<UserPreset>
         get() = try {
             val a = JSONArray(presetsRaw)
-            List(a.length()) { i ->
+            (0 until a.length()).mapNotNull { i ->
                 val o = a.getJSONObject(i)
-                UserPreset(o.getString("name"), EqConfig.fromJson(o.getString("cfg")))
+                val p = o.optJSONObject("part")
+                val part = p?.let { EqPart.fromJson(it) }
+                    ?: p?.let { old -> legacyPart(old) }  // preset della versione 2 (15 bande)
+                    ?: o.optString("cfg", "").takeIf { it.isNotEmpty() }?.let { DspSettings.fromJson(it).eqPart() }  // versione 1
+                part?.let { UserPreset(o.getString("name"), it) }
             }
         } catch (_: Exception) {
             emptyList()
         }
 
-    /** Salva (o sostituisce, se il nome esiste già) un preset con la configurazione attuale. */
-    fun saveUserPreset(name: String, cfg: EqConfig) {
+    private fun legacyPart(o: JSONObject): EqPart? {
+        val ga = o.optJSONArray("graphic") ?: return null
+        val f = DspSettings.freqsFor(15)
+        return EqPart(f, List(15) { ga.optDouble(it, 0.0).toFloat() }, o.optDouble("pre", 0.0).toFloat())
+    }
+
+    /** Salva (o sostituisce, se il nome esiste già) un preset. */
+    fun saveUserPreset(name: String, part: EqPart) {
         val n = name.trim().take(24)
         if (n.isEmpty()) return
-        val list = userPresets.filter { !it.name.equals(n, ignoreCase = true) } + UserPreset(n, cfg.copy(enabled = true))
-        writePresets(list)
+        writePresets(userPresets.filter { !it.name.equals(n, ignoreCase = true) } + UserPreset(n, part))
     }
 
     fun deleteUserPreset(name: String) {
@@ -158,7 +173,8 @@ class Settings(context: Context) {
 
     private fun writePresets(list: List<UserPreset>) {
         val a = JSONArray()
-        for (p in list) a.put(JSONObject().put("name", p.name).put("cfg", p.config.toJson()))
+        for (p in list) a.put(JSONObject().put("name", p.name).put("part", p.part.toJson()))
         presetsRaw = a.toString()
     }
+
 }

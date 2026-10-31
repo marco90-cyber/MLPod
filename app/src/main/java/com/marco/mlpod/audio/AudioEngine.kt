@@ -134,8 +134,24 @@ class AudioEngine(
             }
         })
 
-        eqProcessor.setConfig(settings.eq)
-        settings.onEqChanged = { cfg -> eqProcessor.setConfig(cfg) }
+        eqProcessor.setSettings(settings.dsp)
+        var lastRgMode = settings.dsp.replayGain
+        settings.onDspChanged = { cfg ->
+            eqProcessor.setSettings(cfg)
+            if (cfg.replayGain != lastRgMode) {
+                lastRgMode = cfg.replayGain
+                if (cfg.replayGain != ReplayGain.OFF) planScans()
+            }
+        }
+        // la loudness segue il volume del telefono
+        outputMonitor.onKindChanged = { updateListenVolume() }
+        updateListenVolume()
+        app.contentResolver.registerContentObserver(
+            android.provider.Settings.System.CONTENT_URI, true,
+            object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) = updateListenVolume()
+            }
+        )
 
         player.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -243,7 +259,12 @@ class AudioEngine(
     private fun updateCurrent() {
         val idx = player.currentMediaItemIndex
         val t = queue.getOrNull(idx)
+        val prevUri = currentTrack?.uri
         currentTrack = t
+        if (t?.uri != prevUri) {
+            eqProcessor.scannedGain = t?.let { settings.loudnessCache.get(it.uri) }
+            planScans()
+        }
         queueIndex = idx
         queueSize = queue.size
         if (t == null) {
@@ -281,6 +302,9 @@ class AudioEngine(
 
     fun playQueue(tracks: List<Track>, startIndex: Int, shuffle: Boolean = false) {
         if (tracks.isEmpty()) return
+        scanCancel.set(true)            // annulla le analisi della coda precedente
+        scanCancel = java.util.concurrent.atomic.AtomicBoolean(false)
+        scanQueued.clear()
         queue = tracks
         runtimeSampleRate = 0
         runtimePcmBits = 0
@@ -341,4 +365,72 @@ class AudioEngine(
         volume = v
         settings.volume = v
     }
+
+    /** Volume multimediale del telefono come fattore lineare (0 dB = 1), per la loudness. */
+    private fun updateListenVolume() {
+        try {
+            val am = app.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+            val idx = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+            val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val db = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                am.getStreamVolumeDb(android.media.AudioManager.STREAM_MUSIC, idx, DEVICE_TYPE)
+            } else {
+                // stima: la scala di Android copre circa 60 dB
+                if (idx == 0) -60f else -60f * (1f - idx.toFloat() / max)
+            }
+            eqProcessor.listenVolume = if (db.isFinite()) Math.pow(10.0, db.coerceIn(-80f, 0f) / 20.0) else 1.0
+        } catch (_: Throwable) {
+            eqProcessor.listenVolume = 1.0
+        }
+    }
+
+    private val DEVICE_TYPE: Int get() = when (outputMonitor.kind) {
+        OutKind.Speaker -> android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        OutKind.Wired -> android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+        OutKind.Bluetooth -> android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+        OutKind.Usb -> android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+        OutKind.Hdmi -> android.media.AudioDeviceInfo.TYPE_HDMI
+        OutKind.Other -> android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+    }
+
+    /** True mentre il brano attuale, senza tag ReplayGain, viene analizzato. */
+    var scanningCurrent by mutableStateOf(false)
+        private set
+
+    private val scanExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "loudness").apply { priority = Thread.MIN_PRIORITY } }
+    private var scanCancel = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val scanQueued = HashSet<String>()
+
+    /** Analizza il brano attuale e il successivo (se mancano nella cache), in background. */
+    private fun planScans() {
+        if (settings.dsp.replayGain == ReplayGain.OFF) {
+            scanningCurrent = false
+            return
+        }
+        val idx = player.currentMediaItemIndex
+        val next = player.nextMediaItemIndex
+        scanningCurrent = false
+        for (i in listOf(idx, next)) {
+            val t = queue.getOrNull(i) ?: continue
+            if (settings.loudnessCache.get(t.uri) != null) continue
+            if (i == idx) scanningCurrent = true
+            if (!scanQueued.add(t.uri)) continue
+            val cancel = scanCancel
+            scanExecutor.execute {
+                val r = if (cancel.get()) null else LoudnessScanner.scan(app, t.uri, cancel)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    scanQueued.remove(t.uri)
+                    if (r != null) {
+                        settings.loudnessCache.put(t.uri, r)
+                        AppLog.i("Audio", "Loudness di ${t.title}: ${"%.1f".format(r.lufs)} LUFS, picco ${"%.3f".format(r.peak)}")
+                        if (currentTrack?.uri == t.uri) eqProcessor.scannedGain = LoudnessScanner.toInfo(r)
+                    } else if (!cancel.get()) {
+                        AppLog.w("Audio", "Loudness di ${t.title}: analisi non riuscita")
+                    }
+                    if (currentTrack?.uri == t.uri) scanningCurrent = false
+                }
+            }
+        }
+    }
+
 }

@@ -11,3 +11,7 @@ Audio EQ Cookbook, Robert Bristow-Johnson - formule dei filtri biquad (nessun co
 libsoxr (SoX Resampler Library) - Copyright (c) 2007-18 robs@users.sourceforge.net
 Licenza: GNU LGPL v2.1 o successiva (testo in app/src/main/cpp/soxr/LICENCE e COPYING.LGPL).
 Usata per il ricampionamento dell'uscita adattiva; sorgenti in app/src/main/cpp/soxr/.
+
+
+Equalizzatore (da MLEqualizer): idee ispirate a Poweramp, JadOO DSP, Mornye e AutoEQ; nessun codice copiato.
+Filtri: RBJ Audio EQ Cookbook e M. Vicanek, "Matched Second Order Digital Filters". Loudness: ITU-R BS.1770 / EBU R128.

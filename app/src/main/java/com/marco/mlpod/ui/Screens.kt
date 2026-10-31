@@ -346,7 +346,7 @@ fun AppEnv.audioInfoScreen(): MenuScreen = MenuScreen("Info audio") {
             info("Formato", engine.audioInfo.ifBlank { t.detailLine() }),
             info("Hi-Res", if (engine.hiResNow) "Sì" else "No"),
             info("Uscita", if (settings.adaptiveOutput) "Adattiva" else "Standard"),
-            info("Equalizzatore", if (settings.eq.enabled) "${settings.eq.bandCount} bande attivo" else "Spento"),
+            info("Equalizzatore", if (settings.dsp.master && settings.dsp.eq) "${settings.dsp.bands} bande attivo" else "Spento"),
             info("File", t.uri),
         )
     }

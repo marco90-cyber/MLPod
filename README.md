@@ -14,7 +14,7 @@ Lettore musicale per Android in stile **iPod** (click wheel). Tutta l'interfacci
 - Copertine incorporate nei file o file `cover.jpg` / `folder.jpg` nella cartella
 - Formati: MP3, FLAC, WAV, OGG, Opus, AAC, M4A, MKA, AMR (M4A/ALAC dipende dal telefono)
 - **Hi-Res**: uscita float 32 bit, icona HI-RES quando il brano supera 48 kHz o 16 bit
-- **Equalizzatore** DSP a 3-32 bande (frequenza, guadagno e Q per ogni banda), preamp, bassi/alti in boost e attenuazione, preset di fabbrica e preset salvabili
+- **Equalizzatore** di [MLEqualizer](https://github.com/marco90-cyber/Mleq): grafico a 3, 5, 7, 10, 15 o 31 bande modificabile direttamente nella pagina (curva fedele), preamp, toni come Poweramp (frequenza e Q), Analog Bass, Hi-Res Air, Surround+ e stereo, DBFB, loudness legata al volume, ReplayGain (tag o misura R128), headroom automatico e limiter true-peak; preset AutoEQ/Poweramp
 - **Manopole Bassi e Alti** in stile Poweramp con frequenza selezionabile
 - Riproduzione in background con notifica e controlli multimediali
 
@@ -39,7 +39,7 @@ MLPod resta su **Media3/ExoPlayer**; tra decoder e uscita c'è un unico processo
 
 - **Filtri**: cascata di biquad (formule dell'*Audio EQ Cookbook*) calcolati in Kotlin e processati in **doppia precisione**; i campioni in ingresso/uscita sono a 32 bit float (24 bit esatti).
 - **Formati in ingresso**: PCM 16, 24, 32 bit e float, da 1 a 8 canali. Uscita: 16 bit se la sorgente è a 16 bit (con dither TPDF solo se il DSP è attivo), altrimenti float 32 bit.
-- **Bypass reale**: con equalizzatore spento e manopole al centro l'audio non viene elaborato (PCM16 bit-exact, verificato dai test nativi).
+- **Bypass reale**: con il DSP spento l'audio non viene elaborato (PCM16 bit-exact, verificato dai test nativi).
 - **Limiter look-ahead** (5 ms, soglia -0,5 dBFS, rilascio 80 ms), attivo solo quando c'è elaborazione. Il guadagno applicato è sempre minore o uguale a quello necessario per rispettare la soglia (verificato dai test). Non gestisce i picchi inter-campione (true peak): la soglia a -0,5 dBFS lascia un piccolo margine.
 - **Auto-headroom** (opzionale): abbassa il preamp del massimo boost della curva.
 - **Latenza**: il limiter introduce circa 5 ms; la coda viene svuotata a fine brano.

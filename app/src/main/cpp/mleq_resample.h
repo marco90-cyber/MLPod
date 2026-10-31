@@ -10,7 +10,7 @@
 
 #include "soxr/soxr.h"
 
-namespace mlpod {
+namespace mleq {
 
 class Resampler {
 public:
@@ -97,4 +97,4 @@ private:
     int in_ = 1, out_ = 1, ch_ = 2, tail_ = 256;
 };
 
-}  // namespace mlpod
+}  // namespace mleq
