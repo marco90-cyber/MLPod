@@ -42,6 +42,12 @@ struct Params {
     bool loudnessOn = false; double loudnessAmount = 0.7, volume = 1.0;
 
     bool limOn = true; double limThr = -0.5, limRel = 80;
+
+    bool dcOn = false;            // filtro anti-DC (10 Hz); l'app lo accende di serie
+    bool clarityOn = false;       // catena Clarity (da LastWave)
+    int clarityPreset = 0;        // 0 = riferimento, 1 = altoparlante, 2 = cuffie, 3 = DAC
+    double clarityAmount = 1.0;   // 0..1
+    bool softOn = false;          // saturazione morbida a ginocchio prima del limiter
 };
 
 namespace params {
@@ -96,6 +102,11 @@ inline void apply(Params& p, const std::string& k, const std::string& v) {
     else if (is("lim")) p.limOn = b;
     else if (is("lim.thr")) p.limThr = clampd(d, -12, 0);
     else if (is("lim.rel")) p.limRel = clampd(d, 5, 1000);
+    else if (is("dc")) p.dcOn = b;
+    else if (is("clarity")) p.clarityOn = b;
+    else if (is("clarity.preset")) p.clarityPreset = static_cast<int>(clampd(d, 0, 3));
+    else if (is("clarity.amount")) p.clarityAmount = clampd(d, 0, 1);
+    else if (is("soft")) p.softOn = b;
 }
 
 /** Legge "k=v;k=v;..." partendo dai valori predefiniti. */

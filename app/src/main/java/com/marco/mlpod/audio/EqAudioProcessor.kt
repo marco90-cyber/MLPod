@@ -242,7 +242,10 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
             if (s.air) add("Hi-Res Air")
             if (s.stereo) add(if (s.surroundMode > 0) "Surround+" else "Stereo")
             if (s.dbfbMode > 0) add("DBFB")
+            if (s.clarity) add("Clarity")
             if (s.loudness) add("Loudness")
+            if (s.dcBlock) add("Anti-DC")
+            if (s.softSat) add("Saturazione morbida")
             if (s.limiter) add("Limiter")
         }
     }

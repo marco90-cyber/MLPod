@@ -312,4 +312,115 @@ private:
     double sum_ = 0, r_ = 1, minGain_ = 1;
 };
 
+// ----------------------------------------------------------------------------- moduli da LastWave
+//
+// Le idee di questi tre moduli (filtro anti-DC, catena Clarity con exciter e bassi mono,
+// saturazione morbida a ginocchio) vengono da DspProcessor di LastWave
+// (https://github.com/Clash-Projects/LastWave-native, GPL-3.0), riscritte qui in doppia precisione.
+
+/** Filtro anti-DC a un polo (10 Hz): toglie la componente continua, trasparente per la musica. */
+class DcBlocker {
+public:
+    void prepare(double fs, int ch) {
+        r_ = std::exp(-2.0 * 3.14159265358979323846 * 10.0 / fs);
+        ch_ = ch; x_.assign(ch, 0.0); y_.assign(ch, 0.0);
+    }
+    void reset() { std::fill(x_.begin(), x_.end(), 0.0); std::fill(y_.begin(), y_.end(), 0.0); }
+    void set(bool on) { if (on && !on_) reset(); on_ = on; }
+    bool on() const { return on_; }
+    void process(double* w, int frames) {
+        if (!on_) return;
+        for (int f = 0; f < frames; f++) {
+            for (int c = 0; c < ch_; c++) {
+                double& v = w[static_cast<size_t>(f) * ch_ + c];
+                const double y = v - x_[c] + r_ * y_[c];
+                x_[c] = v; y_[c] = y; v = y;
+            }
+        }
+    }
+private:
+    bool on_ = false;
+    double r_ = 0.999;
+    int ch_ = 2;
+    std::vector<double> x_, y_;
+};
+
+/**
+ * Clarity - parte non lineare e stereo: exciter "a nastro" sopra i 6 kHz (armoniche dispari
+ * leggere) e bassi mono (il laterale sotto i 130 Hz va al centro) con un leggero allargamento.
+ * La parte lineare (sub, corpo, anti-fango, risonanze, presenza, aria) sta nella pila di filtri.
+ */
+class ClarityStage {
+public:
+    void prepare(double fs, int ch) {
+        ch_ = ch;
+        exHp_ = design::highPass(fs, 6000.0, 0.7071067811865476);
+        sideHp_ = design::highPass(fs, 130.0, 0.7071067811865476);
+        ex_.assign(ch, BiquadState{});
+        side_.reset();
+        amount_.setRate(fs); exciter_.setRate(fs);
+    }
+    void reset() { for (auto& s : ex_) s.reset(); side_.reset(); }
+    /** [amount] 0..1 quantità complessiva, [exciter] guadagno dell'exciter (0..~0.25). */
+    void set(bool on, double amount, double exciter) {
+        on_ = on;
+        amount_.target = on ? amount : 0.0;
+        exciter_.target = on ? exciter : 0.0;
+    }
+    bool active() const { return on_ || !amount_.settled() || amount_.cur > 1e-6; }
+    void process(double* w, int frames) {
+        if (!active()) return;
+        for (int f = 0; f < frames; f++) {
+            const double a = amount_.next();
+            const double ex = exciter_.next() * a;
+            double* x = w + static_cast<size_t>(f) * ch_;
+            for (int c = 0; c < ch_; c++) {
+                const double h = ex_[c].run(exHp_, x[c]);
+                x[c] += (h - h * h * h * 0.25) * ex;
+            }
+            if (ch_ == 2) {
+                const double mid = 0.5 * (x[0] + x[1]);
+                const double side = 0.5 * (x[0] - x[1]);
+                const double sideHi = side_.run(sideHp_, side);
+                // a quantita' piena: laterale solo sopra 130 Hz e allargato del 22%
+                const double s2 = side + a * (sideHi * 1.22 - side);
+                x[0] = mid + s2; x[1] = mid - s2;
+            }
+        }
+    }
+private:
+    bool on_ = false;
+    int ch_ = 2;
+    Coef exHp_, sideHp_;
+    std::vector<BiquadState> ex_;
+    BiquadState side_;
+    Smoothed amount_, exciter_;
+};
+
+/**
+ * Saturazione morbida a ginocchio: lineare fino a -1,5 dBFS, poi tanh che si avvicina dolcemente
+ * a -0,5 dBFS senza mai superarlo. Prima del limiter: i picchi vengono arrotondati invece che
+ * tagliati, il limiter lavora meno.
+ */
+class SoftKnee {
+public:
+    void set(bool on) { on_ = on; }
+    bool on() const { return on_; }
+    static inline double shape(double x) {
+        constexpr double kKnee = 0.8413951416451951;    // -1,5 dBFS
+        constexpr double kCeil = 0.9440608762859234;    // -0,5 dBFS
+        const double a = std::fabs(x);
+        if (a <= kKnee) return x;
+        const double r = kCeil - kKnee;
+        const double y = kKnee + r * std::tanh((a - kKnee) / r);
+        return x < 0 ? -y : y;
+    }
+    void process(double* w, size_t n) {
+        if (!on_) return;
+        for (size_t i = 0; i < n; i++) w[i] = shape(w[i]);
+    }
+private:
+    bool on_ = false;
+};
+
 }  // namespace mleq

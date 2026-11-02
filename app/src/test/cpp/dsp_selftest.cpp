@@ -345,7 +345,7 @@ static void testStability() {
         std::snprintf(b, sizeof b,
             "master=1;lim=1;headroom=%d;pre=%g;eqx=%d;bass=%g;bass.f=%g;bass.q=%g;treble=%g;treble.f=%g;treble.q=%g;"
             "abass=1;abass.drive=%g;abass.warmth=%g;air=1;air.amount=%g;"
-            "surround=%d;stereo=1;balance=%g;expand=%g;crossfeed=%g;dbfb=%d;loud=1;volume=%g;",
+            "surround=%d;stereo=1;balance=%g;expand=%g;crossfeed=%g;dbfb=%d;loud=1;volume=%g;dc=1;clarity=1;soft=1;",
             int(u(rng) * 2), u(rng) * 24 - 12, int(u(rng) * 3), u(rng) * 30 - 15, 20 + u(rng) * 900, 0.1 + u(rng) * 1.9,
             u(rng) * 30 - 15, 1000 + u(rng) * 19000, 0.1 + u(rng) * 1.9, u(rng), u(rng), u(rng),
             int(u(rng) * 4), u(rng) * 2 - 1, u(rng), u(rng), int(u(rng) * 3), u(rng));
@@ -399,7 +399,7 @@ static void testResample() {
 static void benchmark() {
     const int sr = 48000, secs = 20;
     Engine e; e.configure(sr, 2);
-    std::string s = "master=1;lim=1;bass=6;treble=4;abass=1;air=1;surround=1;stereo=1;crossfeed=0.5;dbfb=1;loud=1;volume=0.5;";
+    std::string s = "master=1;lim=1;bass=6;treble=4;abass=1;air=1;surround=1;stereo=1;crossfeed=0.5;dbfb=1;loud=1;volume=0.5;dc=1;clarity=1;soft=1;";
     { std::vector<double> gg(31); for (int i = 0; i < 31; i++) gg[i] = (i % 3) - 1.0; s += geq(F31, gg, true); }
     e.setParams(s.c_str());
     std::mt19937 rng(9); std::normal_distribution<double> nd(0, 0.2);
@@ -452,6 +452,68 @@ static void testLoudness() {
     CHECK(measureLufs(48000, 2, 1000.0, -20.0, 0.3) < -900.0, "loudness: brano < 400 ms = non misurabile");
 }
 
+static void testDcBlocker() {
+    const int sr = 48000;
+    Engine e; e.configure(sr, 2); e.setParams((ON + "dc=1").c_str());
+    auto x = sine(sr, 2, 1000, 0.25, sr * 2);
+    for (auto& v : x) v += 0.2f;   // componente continua
+    runE(e, x, 2);
+    double mean = 0; const int n = static_cast<int>(x.size() / 2);
+    for (int i = sr; i < n; i++) mean += x[static_cast<size_t>(i) * 2];
+    mean /= (n - sr);
+    CHECK(std::fabs(mean) < 0.002, MSG("anti-DC: continua residua %.5f (era 0,2)", mean));
+    const double g = 20 * std::log10(amplitude(x, 2, 0, sr, 1000, sr) / 0.25);
+    CHECK(std::fabs(g) < 0.01, MSG("anti-DC: 1 kHz invariato (%.4f dB)", g));
+    const double g20 = gainDbAt(ON + "dc=1", 20, -20, sr);
+    CHECK(g20 > -1.2, MSG("anti-DC: 20 Hz %.2f dB", g20));
+}
+
+static void testClarity() {
+    const int sr = 48000;
+    const std::string C = ON + "clarity=1;clarity.preset=0;clarity.amount=1;";
+    double g = gainDbAt(C, 72, -30, sr);
+    CHECK(g > 2.0 && g < 4.5, MSG("Clarity: corpo a 72 Hz %+.2f dB", g));
+    g = gainDbAt(C, 280, -30, sr);
+    CHECK(g < -1.5, MSG("Clarity: anti-fango a 280 Hz %+.2f dB", g));
+    g = gainDbAt(C, 3400, -30, sr);
+    CHECK(g > 2.5, MSG("Clarity: presenza a 3,4 kHz %+.2f dB", g));
+    g = gainDbAt(C, 15, -30, sr);
+    CHECK(g < -6, MSG("Clarity: sub-sonico a 15 Hz %+.2f dB", g));
+    const double gs = gainDbAt(ON + "clarity=1;clarity.preset=1;clarity.amount=1;", 72, -30, sr);
+    CHECK(gs < g + 100 && gs < gainDbAt(C, 72, -30, sr) - 1.0, MSG("Clarity: preset altoparlante meno bassi (%+.2f dB)", gs));
+    const double g0 = gainDbAt(ON + "clarity=1;clarity.amount=0;", 3400, -30, sr);
+    CHECK(std::fabs(g0) < 0.15, MSG("Clarity: quantita' 0 quasi neutra (%+.3f dB)", g0));
+    // bassi mono: un segnale solo laterale a 60 Hz viene quasi annullato
+    Engine e; e.configure(sr, 2); e.setParams(C.c_str());
+    std::vector<float> x(static_cast<size_t>(sr) * 2 * 2);
+    for (int i = 0; i < sr * 2; i++) { const float v = static_cast<float>(0.1 * std::sin(2 * kPi * 60 * i / sr)); x[i * 2] = v; x[i * 2 + 1] = -v; }
+    runE(e, x, 2);
+    const double side = amplitude(x, 2, 0, sr, 60, sr);
+    CHECK(side < 0.05, MSG("Clarity: laterale a 60 Hz ridotto a %.3f (era 0,1)", side));
+}
+
+static void testSoftKnee() {
+    bool okLin = true, okCeil = true, okMono = true;
+    double prev = -10;
+    for (int i = -2000; i <= 2000; i++) {
+        const double x = i / 1000.0;
+        const double y = SoftKnee::shape(x);
+        if (std::fabs(x) <= 0.84 && y != x) okLin = false;
+        if (std::fabs(y) > 0.9440608762859234 + 1e-12) okCeil = false;
+        if (y < prev - 1e-12) okMono = false;
+        prev = y;
+    }
+    CHECK(okLin, "saturazione morbida: lineare fino a -1,5 dBFS");
+    CHECK(okCeil, "saturazione morbida: mai oltre -0,5 dBFS");
+    CHECK(okMono, "saturazione morbida: curva monotona");
+    const int sr = 48000;
+    Engine e; e.configure(sr, 2); e.setParams((ON + "soft=1;pre=6").c_str());
+    auto x = sine(sr, 2, 1000, 0.9, sr);
+    runE(e, x, 2);
+    float pk = 0; for (float v : x) pk = std::max(pk, std::fabs(v));
+    CHECK(pk <= 0.9441f, MSG("saturazione morbida: picco %.4f con +6 dB su 0,9", pk));
+}
+
 int main() {
     testBypass();
     testPcm24();
@@ -469,6 +531,9 @@ int main() {
     testFlushAndLatency();
     testResample();
     testLoudness();
+    testDcBlocker();
+    testClarity();
+    testSoftKnee();
     benchmark();
     if (failures) { std::printf("\n%d TEST FALLITI\n", failures); return 1; }
     std::printf("\nTUTTI I TEST NATIVI SUPERATI\n");

@@ -15,3 +15,7 @@ Usata per il ricampionamento dell'uscita adattiva; sorgenti in app/src/main/cpp/
 
 Equalizzatore (da MLEqualizer): idee ispirate a Poweramp, JadOO DSP, Mornye e AutoEQ; nessun codice copiato.
 Filtri: RBJ Audio EQ Cookbook e M. Vicanek, "Matched Second Order Digital Filters". Loudness: ITU-R BS.1770 / EBU R128.
+
+LastWave (https://github.com/Clash-Projects/LastWave-native) - GPL-3.0
+  Catena "Studio Master Clarity", filtro anti-DC e saturazione morbida a ginocchio, riscritti
+  in doppia precisione in app/src/main/cpp/dsp_modules.h e dsp_engine.h (via MLEqualizer).

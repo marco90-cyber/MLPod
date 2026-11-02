@@ -12,6 +12,7 @@ import kotlin.math.sqrt
 /** Etichette dei moduli a scelta multipla. */
 object Modes {
     val surround = listOf("Spento", "Tradizionale", "Palco frontale", "Ultra Wide")
+    val clarity = listOf("Riferimento", "Altoparlante", "Cuffie", "DAC")
 }
 
 /**
@@ -58,6 +59,16 @@ data class DspSettings(
     val dbfbMode: Int = 0,
     val loudness: Boolean = false,
     val loudnessAmount: Float = 0.7f,
+    /** Clarity (da LastWave): curva "da studio", exciter e bassi mono. */
+    val clarity: Boolean = false,
+    val clarityPreset: Int = 0,
+    val clarityAmount: Float = 1f,
+
+    // Pulizia e protezione
+    /** Filtro anti-DC a 10 Hz all'ingresso del DSP. */
+    val dcBlock: Boolean = true,
+    /** Saturazione morbida a ginocchio prima del limiter. */
+    val softSat: Boolean = false,
 
     // Livello
     val autoHeadroom: Boolean = true,
@@ -93,6 +104,8 @@ data class DspSettings(
         put("dbfb", dbfbMode)
         put("loud", b(loudness)); put("loud.amount", f(loudnessAmount)); put("volume", String.format(Locale.US, "%.4f", volume))
         put("lim", b(limiter)); put("lim.thr", f(limiterThresholdDb)); put("lim.rel", f(limiterReleaseMs))
+        put("clarity", b(clarity)); put("clarity.preset", clarityPreset); put("clarity.amount", f(clarityAmount))
+        put("dc", b(dcBlock)); put("soft", b(softSat))
         return sb.toString()
     }
 
@@ -138,6 +151,8 @@ data class DspSettings(
         o.put("headroom", autoHeadroom)
         o.put("lim", limiter); o.put("limThr", limiterThresholdDb.toDouble()); o.put("limRel", limiterReleaseMs.toDouble())
         o.put("rg", replayGain)
+        o.put("clarity", clarity); o.put("clarityPreset", clarityPreset); o.put("clarityAmount", clarityAmount.toDouble())
+        o.put("dc", dcBlock); o.put("soft", softSat)
         return o
     }
 
@@ -237,6 +252,9 @@ data class DspSettings(
                 limiter = o.optBoolean("lim", true), limiterThresholdDb = o.fl("limThr", d.limiterThresholdDb, -12f, 0f),
                 limiterReleaseMs = o.fl("limRel", d.limiterReleaseMs, 5f, 1000f),
                 replayGain = o.optInt("rg", 0).coerceIn(0, 2),
+                clarity = o.optBoolean("clarity", false), clarityPreset = o.optInt("clarityPreset", 0).coerceIn(0, 3),
+                clarityAmount = o.fl("clarityAmount", 1f, 0f, 1f),
+                dcBlock = o.optBoolean("dc", true), softSat = o.optBoolean("soft", false),
             )
         }
 

@@ -139,11 +139,14 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
             item(key = "tone") { ToneCard(env, s, mod("tone", s)) }
             item(key = "abass") { AnalogBassCard(env, s, mod("abass", s)) }
             item(key = "air") { AirCard(env, s, mod("air", s)) }
+            item(key = "clarity") { ClarityCard(env, s, mod("clarity", s)) }
             item(key = "stereo") { StereoCard(env, s, mod("stereo", s)) }
             item(key = "dbfb") { DbfbCard(env, s, mod("dbfb", s)) }
             item(key = "loud") { LoudnessCard(env, s, mod("loud", s)) }
             item(key = "rg") { ReplayGainCard(env, s, mod("rg", s)) }
             item(key = "headroom") { SimpleCard(env, mod("headroom", s)) }
+            item(key = "dc") { SimpleCard(env, mod("dc", s)) }
+            item(key = "soft") { SimpleCard(env, mod("soft", s)) }
             item(key = "lim") { LimiterCard(env, s, mod("lim", s)) }
         }
     }
@@ -413,6 +416,16 @@ private fun ReplayGainCard(env: AppEnv, s: DspSettings, m: ModInfo) {
 }
 
 @Composable
+private fun ClarityCard(env: AppEnv, s: DspSettings, m: ModInfo) {
+    val st = env.settings
+    ModCard(env, m) {
+        Text("Uscita", color = Ml.text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Choices(Modes.clarity, s.clarityPreset) { i -> st.updateDsp { it.copy(clarityPreset = i) } }
+        LabeledSlider("Quantità", s.clarityAmount, 0f..1f, fmtPct(s.clarityAmount)) { v -> st.updateDsp { it.copy(clarityAmount = v) } }
+    }
+}
+
+@Composable
 private fun LimiterCard(env: AppEnv, s: DspSettings, m: ModInfo) {
     val st = env.settings
     val red by produceState(0f, s.limiter) {
@@ -506,6 +519,30 @@ private fun mod(key: String, s: DspSettings): ModInfo = when (key) {
             "guadagno non porta mai il brano oltre 0 dBFS di picco.",
         s.replayGain != ReplayGain.OFF,
     ) { d, on -> d.copy(replayGain = if (on) maxOf(ReplayGain.TRACK, d.replayGain) else ReplayGain.OFF, master = d.master || on) }
+    "clarity" -> ModInfo(
+        key, "Clarity", "Suono da studio: corpo, presenza, aria, bassi mono",
+        "Catena \"Studio Master Clarity\" presa da LastWave: taglia il sub-sonico sotto i 24 Hz, dà corpo ai bassi " +
+            "(+3,2 dB a 72 Hz), pulisce la zona fangosa (-3 dB a 280 Hz) e le risonanze \"a scatola\" (750 Hz), " +
+            "porta avanti voci e strumenti (+3,8 dB a 3,4 kHz) e aggiunge aria sopra i 10,5 kHz. Un exciter leggero " +
+            "crea armoniche sopra i 6 kHz e i bassi sotto i 130 Hz vanno al centro (più compatti), con l'immagine " +
+            "stereo un po' più larga.\n\nUscita: Riferimento, Altoparlante (meno bassi e aria), Cuffie (bassi e " +
+            "presenza più morbidi), DAC (acuti e exciter più gentili). Quantità dosa tutta la catena.",
+        s.clarity,
+    ) { d, on -> d.copy(clarity = on, master = d.master || on) }
+    "dc" -> ModInfo(
+        key, "Filtro anti-DC", "Toglie la componente continua (10 Hz)",
+        "Alcuni file hanno una piccola componente continua (il segnale non oscilla intorno allo zero): sprecava " +
+            "spazio prima del limiter e faceva \"tic\" all'avvio. Il filtro (un polo a 10 Hz, da LastWave) la toglie; " +
+            "sulla musica è trasparente (-1 dB a 20 Hz).",
+        s.dcBlock,
+    ) { d, on -> d.copy(dcBlock = on) }
+    "soft" -> ModInfo(
+        key, "Saturazione morbida", "Arrotonda i picchi invece di tagliarli",
+        "Prima del limiter: fino a -1,5 dBFS il segnale passa intatto, sopra viene arrotondato con una curva tanh che " +
+            "si avvicina dolcemente a -0,5 dBFS senza mai superarlo, come un nastro analogico (idea di LastWave). " +
+            "I picchi suonano meno duri e il limiter lavora meno.",
+        s.softSat,
+    ) { d, on -> d.copy(softSat = on, master = d.master || on) }
     "headroom" -> ModInfo(
         key, "Headroom automatico", "Abbassa l'ingresso di quanto rinforzi",
         "Il motore calcola il rinforzo massimo di equalizzatore, toni e moduli e abbassa l'ingresso di altrettanto: " +
