@@ -37,8 +37,11 @@ import androidx.core.view.WindowCompat
 
 @Composable
 fun IpodApp(env: AppEnv) {
-    MaterialTheme(colorScheme = darkColorScheme()) {
-        IpodContent(env)
+    val switchStyle = com.marco.mltheme.MLThemeSettings.get(LocalContext.current).switchStyle
+    androidx.compose.runtime.CompositionLocalProvider(com.marco.mltheme.LocalSwitchStyle provides switchStyle) {
+        MaterialTheme(colorScheme = darkColorScheme()) {
+            IpodContent(env)
+        }
     }
 }
 

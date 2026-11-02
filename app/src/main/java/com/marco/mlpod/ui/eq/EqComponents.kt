@@ -105,16 +105,10 @@ internal fun NeonSlider(
     }
 }
 
-/** Interruttore Material 3 con i colori del tema. */
+/** Interruttore nello stile scelto (MLTheme). */
 @Composable
 internal fun MlSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
-    Switch(
-        checked = checked, onCheckedChange = onChange,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = Ml.onPrimary, checkedTrackColor = Ml.primary,
-            uncheckedThumbColor = Ml.outline, uncheckedTrackColor = Ml.chip, uncheckedBorderColor = Ml.outline,
-        )
-    )
+    com.marco.mltheme.MLSwitch(checked = checked, onCheckedChange = onChange)
 }
 
 /**

@@ -230,6 +230,15 @@ fun AppEnv.appearanceScreen(): MenuScreen = MenuScreen("Aspetto") {
         },
         toggleItem("Copertina nel menu", settings.coverInMenu) { settings.coverInMenu = it },
         toggleItem("Schermo sempre acceso", settings.keepScreenOn) { settings.keepScreenOn = it },
+        // stile degli interruttori dell'equalizzatore (MLTheme, come in MLauncher)
+        MenuItem(
+            "Stile interruttori",
+            value = com.marco.mltheme.SWITCH_STYLES.firstOrNull { it.first == com.marco.mltheme.MLThemeSettings.get(app).switchStyle }?.second,
+        ) {
+            val ml = com.marco.mltheme.MLThemeSettings.get(app)
+            val keys = com.marco.mltheme.SWITCH_STYLES.map { it.first }
+            ml.switchStyle = keys[(keys.indexOf(ml.switchStyle) + 1) % keys.size]
+        },
     )
 }
 
