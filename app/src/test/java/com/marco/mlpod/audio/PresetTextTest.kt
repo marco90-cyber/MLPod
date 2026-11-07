@@ -57,4 +57,55 @@ class PresetTextTest {
         assertNull(PresetText.parse("ciao"))
         assertTrue(PresetText.parseMulti("[{\"x\":1}]", "x").isEmpty())
     }
+    @Test
+    fun powerampParametricJsonKeepsFilters() {
+        // tipi di Poweramp (ordine del menu): 0 passa basso, 1 passa alto, 2 passa banda, 3 campanatura, 4/5 scaffali
+        val json = """[{"name":"Pro30","preamp":-2.0,"parametric":true,"bands":[
+            {"type":0,"channels":0,"frequency":90,"q":0.8,"gain":0.0,"color":0},
+            {"type":0,"channels":0,"frequency":105,"q":0.7,"gain":4.5,"color":0},
+            {"type":2,"channels":0,"frequency":12500,"q":1.41,"gain":2.0,"color":0},
+            {"type":3,"channels":0,"frequency":4181,"q":5.53,"gain":5.0,"color":0},
+            {"type":5,"channels":0,"frequency":10000,"q":0.7,"gain":2.5,"color":0}]}]"""
+        val l = PresetText.parseParametric(json, "x")
+        assertEquals(1, l.size)
+        val b = l[0].bands
+        assertEquals(4, b.size)                                  // la manopola a 0 dB non conta
+        assertEquals(PeqBand.LS, b[0].type)
+        assertEquals(PeqBand.PK, b[1].type)
+        assertEquals(PeqBand.PK, b[2].type)
+        assertEquals(PeqBand.HS, b[3].type)
+        assertEquals(-2f, l[0].preampDb, 0f)
+        assertTrue(l[0].notes.isNotEmpty())                      // passa basso e passa banda approssimati
+    }
+
+    @Test
+    fun parametricTextRoundTrip() {
+        val txt = "Preamp: -6.5 dB\nFilter 1: ON PK Fc 54 Hz Gain -10.0 dB Q 0.65\nFilter 2: ON LS Fc 105 Hz Gain 4.9 dB Q 0.70\nFilter 3: ON HP Fc 25 Hz Q 0.71\n"
+        val p = PresetText.parseParametric(txt, "x").single()
+        assertEquals(3, p.bands.size)
+        assertEquals(PeqBand.HP, p.bands[2].type)
+        val s = DspSettings(eqMode = DspSettings.EQ_PARAMETRIC, peq = p.bands, peqPreamp = p.preampDb)
+        val back = PresetText.parseParametric(PresetText.exportParametric(s), "y").single()
+        assertEquals(p.bands, back.bands)
+        assertEquals(-6.5f, back.preampDb, 0f)
+        // JSON: campana 3, scaffale basso 4; il passa-alto non esiste con guadagno e resta fuori
+        val js = PresetText.exportPoweramp("t", s)
+        assertTrue(js.contains("\"type\": 3"))
+        assertTrue(js.contains("\"type\": 4"))
+        assertEquals(1, PresetText.powerampSkipped(s))
+    }
+
+    @Test
+    fun parametricSettingsPersistAndReachEngine() {
+        val s = DspSettings(master = true, eqMode = DspSettings.EQ_AUTOEQ, autoEqName = "Cuffia", peqPreamp = -3f,
+            peq = listOf(PeqBand(true, PeqBand.PK, 1000f, 3f, 1.4f), PeqBand(false, PeqBand.LS, 100f, 4f, 0.7f)))
+        val back = DspSettings.fromJson(s.toJson().toString())
+        assertEquals(s.peq, back.peq)
+        assertEquals(DspSettings.EQ_AUTOEQ, back.eqMode)
+        assertEquals("Cuffia", back.autoEqName)
+        val n = s.toNative()
+        assertTrue(n.contains("peq=1;"))
+        assertTrue(n.contains("eq=0;"))
+        assertTrue(n.contains("peq.t=0,-1;"))
+    }
 }

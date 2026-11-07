@@ -19,3 +19,9 @@ Filtri: RBJ Audio EQ Cookbook e M. Vicanek, "Matched Second Order Digital Filter
 LastWave (https://github.com/Clash-Projects/LastWave-native) - GPL-3.0
   Catena "Studio Master Clarity", filtro anti-DC e saturazione morbida a ginocchio, riscritti
   in doppia precisione in app/src/main/cpp/dsp_modules.h e dsp_engine.h (via MLEqualizer).
+
+AutoEQ (https://github.com/jaakkopasanen/AutoEq) - MIT License, Copyright (c) 2018-2022 Jaakko Pasanen.
+  Testo della licenza in app/src/main/assets/autoeq-LICENSE.txt. I profili parametrici delle cuffie sono
+  inclusi in app/src/main/assets/autoeq.tsv.gz (formato compatto). Il profilo "OneOdio Pro 30" e'
+  ricostruito con il codice di AutoEQ dal grafico di audio-sound@hatena (target Harman over-ear 2018):
+  non e' una misura AutoEQ.

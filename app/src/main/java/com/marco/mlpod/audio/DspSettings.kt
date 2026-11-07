@@ -29,6 +29,15 @@ data class DspSettings(
     val graphic: List<Float> = List(10) { 0f },
     val faithful: Boolean = true,
 
+    /** Modo dell'equalizzatore: [EQ_GRAPHIC], [EQ_PARAMETRIC] o [EQ_AUTOEQ] (gli ultimi due usano [peq]). */
+    val eqMode: Int = EQ_GRAPHIC,
+    /** Filtri del parametrico (fino a [PEQ_MAX]). */
+    val peq: List<PeqBand> = emptyList(),
+    /** Preamp del preset parametrico (AutoEQ o file importato). */
+    val peqPreamp: Float = 0f,
+    /** Cuffia AutoEQ scelta (vuoto = nessuna). */
+    val autoEqName: String = "",
+
     // Preamp
     val preampOn: Boolean = false,
     val preampDb: Float = 0f,
@@ -92,9 +101,16 @@ data class DspSettings(
         put("pre", f(if (preampOn) preampDb else 0f))
         put("rg", String.format(Locale.US, "%.3f", rgDb))
         put("headroom", b(autoHeadroom))
-        put("eq", b(eq)); put("geq.faithful", b(faithful)); put("geq.n", bands)
+        val para = eq && eqMode != EQ_GRAPHIC
+        put("eq", b(eq && !para)); put("geq.faithful", b(faithful)); put("geq.n", bands)
         put("geq.f", freqs.joinToString(",") { f(it) })
         put("geq.g", List(bands) { graphic.getOrElse(it) { 0f } }.joinToString(",") { f(it) })
+        put("peq", b(para)); put("peq.pre", f(peqPreamp))
+        val pb = peq.take(PEQ_MAX)
+        put("peq.t", pb.joinToString(",") { if (it.on) "${it.type}" else "-1" })
+        put("peq.f", pb.joinToString(",") { f(it.freq) })
+        put("peq.g", pb.joinToString(",") { f(it.gain) })
+        put("peq.q", pb.joinToString(",") { f(it.q) })
         put("bass", f(if (tone) bassDb else 0f)); put("bass.f", f(bassFreq)); put("bass.q", f(bassQ))
         put("treble", f(if (tone) trebleDb else 0f)); put("treble.f", f(trebleFreq)); put("treble.q", f(trebleQ))
         put("abass", b(analogBass)); put("abass.drive", f(analogDrive)); put("abass.warmth", f(analogWarmth)); put("abass.f", f(analogFreq))
@@ -107,6 +123,13 @@ data class DspSettings(
         put("clarity", b(clarity)); put("clarity.preset", clarityPreset); put("clarity.amount", f(clarityAmount))
         put("dc", b(dcBlock)); put("soft", b(softSat))
         return sb.toString()
+    }
+
+    /** Nome breve del modo dell'equalizzatore. */
+    fun eqLabel(): String = when (eqMode) {
+        EQ_PARAMETRIC -> "EQ parametrico (${peq.count { it.on }} filtri)"
+        EQ_AUTOEQ -> "AutoEQ ${autoEqName}".trim()
+        else -> "EQ $bands bande"
     }
 
     fun withGain(i: Int, db: Float): DspSettings {
@@ -128,7 +151,7 @@ data class DspSettings(
 
     /** Applica un preset sulle bande attuali (la curva viene adattata al numero di bande). */
     fun withEqPart(p: EqPart): DspSettings = copy(
-        eq = true, master = true,
+        eq = true, master = true, eqMode = EQ_GRAPHIC,
         graphic = freqs.map { p.gainAt(it) },
         preampOn = p.preampDb != 0f || preampOn, preampDb = if (p.preampDb != 0f) p.preampDb else preampDb,
     )
@@ -140,6 +163,8 @@ data class DspSettings(
         o.put("eq", eq); o.put("bands", bands); o.put("faithful", faithful)
         o.put("graphic", JSONArray(List(bands) { graphic.getOrElse(it) { 0f }.toDouble() }))
         o.put("preOn", preampOn); o.put("pre", preampDb.toDouble())
+        o.put("eqMode", eqMode); o.put("peqPre", peqPreamp.toDouble()); o.put("aeqName", autoEqName)
+        o.put("peq", PeqBand.toJson(peq))
         o.put("tone", tone); o.put("bass", bassDb.toDouble()); o.put("bassF", bassFreq.toDouble()); o.put("bassQ", bassQ.toDouble())
         o.put("treble", trebleDb.toDouble()); o.put("trebleF", trebleFreq.toDouble()); o.put("trebleQ", trebleQ.toDouble())
         o.put("abass", analogBass); o.put("abassDrive", analogDrive.toDouble()); o.put("abassWarmth", analogWarmth.toDouble()); o.put("abassF", analogFreq.toDouble())
@@ -158,6 +183,10 @@ data class DspSettings(
 
     companion object {
         const val GAIN = 12f
+        const val EQ_GRAPHIC = 0
+        const val EQ_PARAMETRIC = 1
+        const val EQ_AUTOEQ = 2
+        const val PEQ_MAX = 16
         const val MIN_FREQ = 20f
         const val MAX_FREQ = 20000f
         const val TONE_MAX_DB = 10f
@@ -265,6 +294,10 @@ data class DspSettings(
             return common(o, DspSettings()).copy(
                 eq = o.optBoolean("eq", true), bands = n, graphic = gains, faithful = o.optBoolean("faithful", true),
                 preampOn = o.optBoolean("preOn", false), preampDb = o.fl("pre", 0f, -12f, 12f),
+                eqMode = o.optInt("eqMode", EQ_GRAPHIC).coerceIn(0, 2),
+                peq = PeqBand.fromJson(o.optJSONArray("peq")),
+                peqPreamp = o.fl("peqPre", 0f, -30f, 0f),
+                autoEqName = o.optString("aeqName", ""),
             )
         }
 
@@ -335,6 +368,37 @@ data class DspSettings(
 }
 
 /** Un filtro di un preset testuale: tipo "PK", "LS" o "HS". */
+/** Filtro del parametrico; [type] come nel motore nativo (PK, LS, HS, LP, HP, BP, notch). */
+data class PeqBand(val on: Boolean = true, val type: Int = PK, val freq: Float = 1000f, val gain: Float = 0f, val q: Float = 1f) {
+    val hasGain: Boolean get() = type == PK || type == LS || type == HS
+
+    companion object {
+        const val PK = 0; const val LS = 1; const val HS = 2; const val LP = 3; const val HP = 4; const val BP = 5; const val NOTCH = 6
+        val TYPES = listOf(PK, LS, HS, LP, HP, BP, NOTCH)
+        fun label(t: Int) = when (t) { LS -> "Shelf bassi"; HS -> "Shelf alti"; LP -> "Passa-basso"; HP -> "Passa-alto"; BP -> "Passa-banda"; NOTCH -> "Notch"; else -> "Campana" }
+        fun code(t: Int) = when (t) { LS -> "LS"; HS -> "HS"; LP -> "LP"; HP -> "HP"; BP -> "BP"; NOTCH -> "NO"; else -> "PK" }
+
+        fun toJson(l: List<PeqBand>) = JSONArray().also { a ->
+            l.forEach { b -> a.put(JSONObject().put("on", b.on).put("t", b.type).put("f", b.freq.toDouble()).put("g", b.gain.toDouble()).put("q", b.q.toDouble())) }
+        }
+
+        fun fromJson(a: JSONArray?): List<PeqBand> {
+            if (a == null) return emptyList()
+            val out = ArrayList<PeqBand>()
+            for (i in 0 until minOf(a.length(), DspSettings.PEQ_MAX)) {
+                val o = a.optJSONObject(i) ?: continue
+                out.add(PeqBand(
+                    o.optBoolean("on", true), o.optInt("t", PK).coerceIn(0, 6),
+                    o.optDouble("f", 1000.0).toFloat().coerceIn(20f, 20000f),
+                    o.optDouble("g", 0.0).toFloat().coerceIn(-24f, 24f),
+                    o.optDouble("q", 1.0).toFloat().coerceIn(0.1f, 20f),
+                ))
+            }
+            return out
+        }
+    }
+}
+
 data class FilterSpec(val type: String, val freq: Float, val gain: Float, val q: Float)
 
 /** Preset: una curva (frequenze e guadagni) e il preamp. Si adatta a qualsiasi numero di bande. */

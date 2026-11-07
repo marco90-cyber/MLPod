@@ -101,7 +101,7 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
         val text = readText(uri) ?: return@rememberLauncherForActivityResult
         val list = PresetText.parseMulti(text, "Importato")
         if (list.isEmpty()) {
-            message = "Il file non contiene un preset riconoscibile (AutoEQ, Poweramp o GraphicEQ)."
+            message = "Il file non contiene un preset riconoscibile (AutoEQ, JSON o GraphicEQ)."
         } else {
             for ((name, part) in list) settings.saveUserPreset(name, part)
             settings.updateDsp { it.withEqPart(list.first().second) }
@@ -109,7 +109,39 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
         }
     }
     val exportPreset = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (uri != null) message = if (writeText(uri, PresetText.export(settings.dsp))) "Preset esportato (formato AutoEQ/Poweramp)." else "Esportazione non riuscita."
+        if (uri != null) message = if (writeText(uri, PresetText.export(settings.dsp))) "Preset esportato (formato AutoEQ)." else "Esportazione non riuscita."
+    }
+    val importPeq = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val text = readText(uri) ?: return@rememberLauncherForActivityResult
+        val name = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')?.removeSuffix(" ParametricEQ")?.take(40) ?: "Importato"
+        val list = PresetText.parseParametric(text, name)
+        if (list.isNotEmpty()) {
+            val p = list.first()
+            settings.updateDsp { it.copy(eq = true, master = true, eqMode = DspSettings.EQ_PARAMETRIC, peq = p.bands, peqPreamp = p.preampDb, autoEqName = "") }
+            message = "Preset \"${p.name}\" applicato al Parametrico: ${p.bands.size} filtri" + (if (list.size > 1) " (il file ne conteneva ${list.size}, applicato il primo)." else ".") +
+                (if (p.notes.isNotEmpty()) "\n\nNota: " + p.notes.joinToString("; ") + "." else "")
+        } else {
+            val g = PresetText.parseMulti(text, name)
+            if (g.isEmpty()) message = "Il file non contiene filtri riconoscibili (AutoEQ, Equalizer APO o JSON)."
+            else {
+                for ((n2, part) in g) settings.saveUserPreset(n2, part)
+                settings.updateDsp { it.copy(eqMode = DspSettings.EQ_GRAPHIC).withEqPart(g.first().second) }
+                message = "Il file è un preset grafico: importato e applicato nel Grafico."
+            }
+        }
+    }
+    val exportPeq = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) message = if (writeText(uri, PresetText.exportParametric(settings.dsp))) "Parametrico esportato (formato AutoEQ / Equalizer APO)." else "Esportazione non riuscita."
+    }
+    val exportPoweramp = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            val n = settings.dsp.autoEqName.ifBlank { appName }
+            val skipped = PresetText.powerampSkipped(settings.dsp)
+            message = if (writeText(uri, PresetText.exportPoweramp(n, settings.dsp)))
+                "Parametrico esportato in JSON." + (if (skipped > 0) " $skipped filtri passa-alto/passa-basso/notch non esportati: nel formato JSON quei tipi funzionano in un altro modo." else "")
+            else "Esportazione non riuscita."
+        }
     }
     Column(Modifier.fillMaxSize().background(Ml.background)) {
         header()
@@ -133,6 +165,10 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
                     onSave = { saveDialog = true },
                     onImport = { importPreset.launch(arrayOf("text/*", "application/json", "*/*")) },
                     onExport = { exportPreset.launch("$appName-preset.txt") },
+                    onImportPeq = { importPeq.launch(arrayOf("text/*", "application/json", "*/*")) },
+                    onExportPeq = { exportPeq.launch("${s.autoEqName.ifBlank { appName }} ParametricEQ.txt") },
+                    onExportPoweramp = { exportPoweramp.launch("${s.autoEqName.ifBlank { appName }}.json") },
+                    onMessage = { message = it },
                 )
             }
             item(key = "pre") { PreampCard(env, s, mod("pre", s)) }
@@ -192,10 +228,36 @@ private fun ModCard(env: AppEnv, m: ModInfo, subtitle: String = m.sub, content: 
 private fun SimpleCard(env: AppEnv, m: ModInfo) = ModCard(env, m) {}
 
 @Composable
-private fun EqCard(env: AppEnv, s: DspSettings, m: ModInfo, onSave: () -> Unit, onImport: () -> Unit, onExport: () -> Unit) {
+private fun EqCard(
+    env: AppEnv, s: DspSettings, m: ModInfo, onSave: () -> Unit, onImport: () -> Unit, onExport: () -> Unit,
+    onImportPeq: () -> Unit, onExportPeq: () -> Unit, onExportPoweramp: () -> Unit, onMessage: (String) -> Unit,
+) {
+    val st = env.settings
+    // ordine della tendina: Parametrico, AutoEQ, Grafico
+    val modes = listOf(DspSettings.EQ_PARAMETRIC, DspSettings.EQ_AUTOEQ, DspSettings.EQ_GRAPHIC)
+    val sub = when (s.eqMode) {
+        DspSettings.EQ_PARAMETRIC -> "Parametrico · ${s.peq.count { it.on }} filtri"
+        DspSettings.EQ_AUTOEQ -> "AutoEQ · ${s.autoEqName.ifBlank { "nessuna cuffia" }}"
+        else -> "Grafico · ${s.bands} bande · ${if (s.faithful) "curva fedele" else "bande indipendenti"}"
+    }
+    ModCard(env, m, sub) {
+        Choices(listOf("Parametrico", "AutoEQ", "Grafico"), modes.indexOf(s.eqMode).coerceAtLeast(0)) { i ->
+            env.feedback.tapScreen()
+            st.updateDsp { it.copy(eqMode = modes[i]) }
+        }
+        when (s.eqMode) {
+            DspSettings.EQ_PARAMETRIC -> ParametricContent(env, s, onImportPeq, onExportPeq, onExportPoweramp, onMessage)
+            DspSettings.EQ_AUTOEQ -> AutoEqContent(env, s, onMessage)
+            else -> GraphicContent(env, s, onSave, onImport, onExport)
+        }
+    }
+}
+
+@Composable
+private fun GraphicContent(env: AppEnv, s: DspSettings, onSave: () -> Unit, onImport: () -> Unit, onExport: () -> Unit) {
     val st = env.settings
     val res = remember(s) { env.preview.compute(s) }
-    ModCard(env, m, "${s.bands} bande · ${if (s.faithful) "curva fedele" else "bande indipendenti"}") {
+    run {
         Text("Numero di bande", color = Ml.textDim, fontSize = 12.sp)
         Choices(DspSettings.BAND_OPTIONS.map { "$it" }, DspSettings.BAND_OPTIONS.indexOf(s.bands)) { i ->
             env.feedback.tapScreen()
@@ -362,6 +424,16 @@ private fun AirCard(env: AppEnv, s: DspSettings, m: ModInfo) {
 }
 
 @Composable
+private fun ClarityCard(env: AppEnv, s: DspSettings, m: ModInfo) {
+    val st = env.settings
+    ModCard(env, m) {
+        Text("Uscita", color = Ml.text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Choices(Modes.clarity, s.clarityPreset) { i -> st.updateDsp { it.copy(clarityPreset = i) } }
+        LabeledSlider("Quantità", s.clarityAmount, 0f..1f, fmtPct(s.clarityAmount)) { v -> st.updateDsp { it.copy(clarityAmount = v) } }
+    }
+}
+
+@Composable
 private fun StereoCard(env: AppEnv, s: DspSettings, m: ModInfo) {
     val st = env.settings
     ModCard(env, m) {
@@ -416,16 +488,6 @@ private fun ReplayGainCard(env: AppEnv, s: DspSettings, m: ModInfo) {
 }
 
 @Composable
-private fun ClarityCard(env: AppEnv, s: DspSettings, m: ModInfo) {
-    val st = env.settings
-    ModCard(env, m) {
-        Text("Uscita", color = Ml.text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        Choices(Modes.clarity, s.clarityPreset) { i -> st.updateDsp { it.copy(clarityPreset = i) } }
-        LabeledSlider("Quantità", s.clarityAmount, 0f..1f, fmtPct(s.clarityAmount)) { v -> st.updateDsp { it.copy(clarityAmount = v) } }
-    }
-}
-
-@Composable
 private fun LimiterCard(env: AppEnv, s: DspSettings, m: ModInfo) {
     val st = env.settings
     val red by produceState(0f, s.limiter) {
@@ -451,13 +513,18 @@ internal class ModInfo(
 
 private fun mod(key: String, s: DspSettings): ModInfo = when (key) {
     "eq" -> ModInfo(
-        key, "Equalizzatore", "Grafico, da 3 a 31 bande",
-        "Equalizzatore grafico: scegli quante bande vuoi (3, 5, 7, 10, 15 o 31) e trascina i cursori direttamente " +
+        key, "Equalizzatore", "Parametrico, AutoEQ o grafico",
+        "Tre modi, uno alla volta.\n\nParametrico: fino a 16 filtri (campana, shelf, passa-alto, passa-basso, passa-banda, " +
+            "notch) con frequenza, guadagno e Q. Importa i file AutoEQ / Equalizer APO e i file JSON così come " +
+            "sono; esporta in testo AutoEQ o in JSON.\n\nAutoEQ: cerca la tua cuffia tra gli oltre 8800 " +
+            "profili di AutoEQ (inclusi nell'app; \"Aggiorna elenco\" scarica quelli nuovi da GitHub). Il profilo finisce " +
+            "nel Parametrico, dove puoi ritoccarlo e salvarlo come cuffia nuova.\n\nGrafico:" +
+            " equalizzatore grafico: scegli quante bande vuoi (3, 5, 7, 10, 15 o 31) e trascina i cursori direttamente " +
             "qui. Le frequenze sono quelle standard (ISO per 10, 15 e 31 bande); la larghezza di ogni banda è calcolata " +
             "dalla distanza dalle vicine.\n\nCurva fedele: le campane vicine si sommano (con tutti i cursori a +6 dB " +
             "si arriverebbe oltre +9 dB); il motore ricalcola i guadagni perché la curva totale passi esattamente dai " +
             "cursori. Sotto ogni cursore, in piccolo, il guadagno reale.\n\nPreset: di fabbrica, salvati da te, " +
-            "importati da AutoEQ o Poweramp; si adattano a qualsiasi numero di bande. Tieni premuto un tuo preset per eliminarlo.",
+            "importati da AutoEQ o da file JSON; si adattano a qualsiasi numero di bande. Tieni premuto un tuo preset per eliminarlo.",
         s.eq,
     ) { d, on -> d.copy(eq = on, master = d.master || on) }
     "pre" -> ModInfo(
@@ -467,8 +534,8 @@ private fun mod(key: String, s: DspSettings): ModInfo = when (key) {
         s.preampOn,
     ) { d, on -> d.copy(preampOn = on, master = d.master || on) }
     "tone" -> ModInfo(
-        key, "Toni", "Bassi e alti come Poweramp: shelf con frequenza e Q",
-        "Due filtri a scaffale (shelf), come le manopole di Poweramp. La manopola dà da 0 a +10 dB; la frequenza " +
+        key, "Toni", "Bassi e alti: shelf con frequenza e Q",
+        "Due filtri a scaffale (shelf), come le classiche manopole dei lettori. La manopola dà da 0 a +10 dB; la frequenza " +
             "dice da dove parte il rinforzo e il Q quanto è ripida la salita (0,10 = molto dolce, 0,71 = netta senza " +
             "risalite, 2 = gradino con una piccola sovraelongazione). Predefiniti: bassi 90 Hz Q 0,80, alti 10 kHz Q 0,60. " +
             "Tocca la frequenza sotto una manopola per cambiarla.",

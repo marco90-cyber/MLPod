@@ -235,7 +235,7 @@ class EqAudioProcessor(private val analyzer: Analyzer) : BaseAudioProcessor() {
     companion object {
         /** Nomi brevi dei moduli accesi. */
         fun activeModules(s: DspSettings): List<String> = buildList {
-            if (s.eq) add("EQ ${s.bands} bande")
+            if (s.eq) add(s.eqLabel())
             if (s.preampOn && s.preampDb != 0f) add("Preamp")
             if (s.tone && (s.bassDb > 0f || s.trebleDb > 0f)) add("Toni")
             if (s.analogBass) add("Analog Bass")

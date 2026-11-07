@@ -16,6 +16,7 @@
 namespace mleq {
 
 constexpr int kMaxBands = 31;   // equalizzatore grafico: da 3 a 31 bande
+constexpr int kMaxPeq = 16;     // equalizzatore parametrico: fino a 16 filtri (usa gli stessi posti del grafico)
 
 struct Params {
     bool master = false;          // false = bypass totale (bit-exact)
@@ -28,6 +29,12 @@ struct Params {
     double geqF[kMaxBands] = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
     double geq[kMaxBands] = {};   // guadagni in dB
     bool geqFaithful = true;
+
+    bool peqOn = false;           // equalizzatore parametrico (in alternativa al grafico)
+    int peqN = 0;
+    int peqT[kMaxPeq] = {};       // tipo (design::FilterType), -1 = spento
+    double peqF[kMaxPeq] = {}, peqG[kMaxPeq] = {}, peqQ[kMaxPeq] = {};
+    double peqPreDb = 0;          // preamp del preset parametrico (es. AutoEQ)
 
     double bassDb = 0, bassFreq = 90, bassQ = 0.8;        // toni (come Poweramp)
     double trebleDb = 0, trebleFreq = 10000, trebleQ = 0.6;
@@ -76,6 +83,23 @@ inline void apply(Params& p, const std::string& k, const std::string& v) {
             dst[j] = is("geq.f") ? clampd(x, 20, 20000) : clampd(x, -15, 15);
             s = (*end == ',') ? end + 1 : end;
         }
+    }
+    else if (is("peq")) p.peqOn = b;
+    else if (is("peq.pre")) p.peqPreDb = clampd(d, -30, 0);
+    else if (is("peq.t") || is("peq.f") || is("peq.g") || is("peq.q")) {
+        const char* s = v.c_str();
+        int j = 0;
+        for (; j < kMaxPeq && *s; j++) {
+            char* end = nullptr;
+            const double x = std::strtod(s, &end);
+            if (end == s) break;
+            if (is("peq.t")) p.peqT[j] = static_cast<int>(clampd(x, -1, 7));
+            else if (is("peq.f")) p.peqF[j] = clampd(x, 10, 22000);
+            else if (is("peq.g")) p.peqG[j] = clampd(x, -24, 24);
+            else p.peqQ[j] = clampd(x, 0.05, 20);
+            s = (*end == ',') ? end + 1 : end;
+        }
+        if (is("peq.t")) p.peqN = j;
     }
     else if (is("bass")) p.bassDb = clampd(d, -15, 15);
     else if (is("bass.f")) p.bassFreq = clampd(d, 20, 1000);

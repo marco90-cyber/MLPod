@@ -514,6 +514,26 @@ static void testSoftKnee() {
     CHECK(pk <= 0.9441f, MSG("saturazione morbida: picco %.4f con +6 dB su 0,9", pk));
 }
 
+// ---------------------------------------------------------------- equalizzatore parametrico
+
+static void testParametric() {
+    // preset delle OneOdio Pro 30 (AutoEQ, 10 filtri): la curva deve passare dai valori calcolati da AutoEQ
+    Engine e; e.configure(48000, 2);
+    e.setParams("master=1;headroom=1;eq=0;peq=1;peq.pre=-6.5;peq.t=0,1,0,0,0,0,0,0,0,2;"
+                "peq.f=54,105,216,357,719,3156,5139,6169,8606,10000;peq.g=-10,4.9,-10,3.8,5.5,6,6,-5.1,-10,-2.6;"
+                "peq.q=0.65,0.7,0.52,1.57,0.69,1.1,3,3,3,0.7");
+    CHECK(std::fabs(e.responseDb(100) + 7.5) < 1.2, MSG("parametrico: 100 Hz %.2f dB (AutoEQ -7.5)", e.responseDb(100)));
+    CHECK(std::fabs(e.responseDb(3000) - 6.0) < 1.2, MSG("parametrico: 3 kHz %.2f dB (AutoEQ +6.0)", e.responseDb(3000)));
+    CHECK(std::fabs(e.responseDb(8000) + 9.4) < 1.5, MSG("parametrico: 8 kHz %.2f dB (AutoEQ -9.4)", e.responseDb(8000)));
+    CHECK(std::fabs(e.inputGainDb() + 6.5) < 0.01, MSG("parametrico: il preamp del preset sostituisce l'headroom (%.2f dB)", e.inputGainDb()));
+    // grafico acceso = il parametrico non suona
+    Engine g; g.configure(48000, 2); g.setParams("master=1;eq=1;peq=1;peq.t=0;peq.f=1000;peq.g=10;peq.q=1");
+    CHECK(std::fabs(g.responseDb(1000)) < 0.01, "parametrico: alternativo al grafico");
+    // filtro spento (-1) e passa-alto
+    Engine h; h.configure(48000, 2); h.setParams("master=1;eq=0;peq=1;peq.t=-1,4;peq.f=1000,100;peq.g=12,0;peq.q=1,0.707");
+    CHECK(std::fabs(h.responseDb(1000)) < 0.05 && h.responseDb(30) < -18, MSG("parametrico: spento ignorato, passa-alto %.1f dB a 30 Hz", h.responseDb(30)));
+}
+
 int main() {
     testBypass();
     testPcm24();
@@ -534,6 +554,7 @@ int main() {
     testDcBlocker();
     testClarity();
     testSoftKnee();
+    testParametric();
     benchmark();
     if (failures) { std::printf("\n%d TEST FALLITI\n", failures); return 1; }
     std::printf("\nTUTTI I TEST NATIVI SUPERATI\n");
