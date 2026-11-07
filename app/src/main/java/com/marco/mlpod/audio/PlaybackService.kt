@@ -19,7 +19,7 @@ class PlaybackService : MediaSessionService() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        session = MediaSession.Builder(this, engine.player)
+        session = MediaSession.Builder(this, engine.controls)
             .setSessionActivity(openApp)
             .build()
     }

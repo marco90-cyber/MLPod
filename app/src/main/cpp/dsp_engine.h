@@ -3,7 +3,7 @@
 // MLEqualizer - motore DSP.
 //
 // Catena (in quest'ordine):
-//   decodifica -> guadagno d'ingresso (preamp + ReplayGain - headroom, con rampa)
+//   decodifica -> guadagno d'ingresso (preamp + ReplayGain + volume DVC - headroom, con rampa)
 //   -> pila di filtri lineari con rampa dei coefficienti (EQ grafico o parametrico, toni, Analog Bass, Air,
 //      Surround, Loudness, Clarity) -> anti-DC
 //   -> Analog Bass Drive -> DBFB -> Clarity (exciter e bassi mono) -> stereo (crossfeed,
@@ -76,6 +76,8 @@ public:
     bool bypass() const { return !p_.master; }
     double headroomDb() const { return headroomDb_; }
     double inputGainDb() const { return inDb_; }
+    /** Volume digitale applicato (dB, 0 se il DVC e' spento). */
+    double dvcDb() const { return dvcDb_; }
     int activeStages() const { int n = 0; for (const Coef& c : coef_) if (!c.identity()) n++; return n; }
 
     int latencyFrames() const { return bypass() ? 0 : (p_.limOn ? limiter_.latency() : 0); }
@@ -248,8 +250,13 @@ private:
         // automatico toglie solo quello che resta
         const double peqPre = (p.peqOn && !p.eqOn) ? p.peqPreDb : 0.0;
         if (p.autoHeadroom) head = std::max(0.0, head + peqPre);
-        headroomDb_ = head;
-        inDb_ = p.preampDb + p.replayGainDb + peqPre - head;
+        // DVC: il volume abbassa gia' il segnale; serve togliere solo la parte di headroom che il
+        // volume non copre. Totale = min(volume, -headroom): a volume basso i rinforzi non costano nulla.
+        const double vol = p.dvcOn ? p.dvcDb : 0.0;
+        const double cut = p.dvcOn ? std::max(0.0, head + vol) : head;
+        headroomDb_ = cut;
+        dvcDb_ = vol;
+        inDb_ = p.preampDb + p.replayGainDb + peqPre + vol - cut;
         inTarget_ = dbToLin(inDb_);
 
         // moduli
@@ -500,7 +507,7 @@ private:
     std::vector<Coef> coef_, cur_;
     std::vector<BiquadState> state_;
     int rampLeft_ = 0;
-    double inTarget_ = 1, inCur_ = 1, inDb_ = 0, headroomDb_ = 0;
+    double inTarget_ = 1, inCur_ = 1, inDb_ = 0, headroomDb_ = 0, dvcDb_ = 0;
     double geqApplied_[kMaxBands] = {};
     double geqQ_[kMaxBands] = {};
     std::vector<float> scratch_, rsOut_;

@@ -43,6 +43,9 @@ class AudioEngine(
 
     val player: ExoPlayer
 
+    /** Player con le dissolvenze: lo usano i comandi dell'app e la sessione multimediale. */
+    val controls: FadingPlayer
+
     var currentTrack by mutableStateOf<Track?>(null)
         private set
     var isPlaying by mutableStateOf(false)
@@ -114,7 +117,8 @@ class AudioEngine(
             2 -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
-        player.volume = settings.volume.coerceIn(0f, 1f)
+        controls = FadingPlayer(player, { settings.dsp.fades }) { settings.volume }
+        controls.refreshVolume()
 
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onAudioTrackInitialized(
@@ -321,30 +325,30 @@ class AudioEngine(
 
     fun togglePlayPause() {
         if (player.mediaItemCount == 0) return
-        if (player.isPlaying) player.pause() else {
+        if (player.isPlaying && !controls.pausing) controls.pause() else {
             if (player.playbackState == Player.STATE_IDLE) player.prepare()
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-            player.play()
+            controls.play()
         }
     }
 
     fun next() {
-        if (player.mediaItemCount > 0) player.seekToNext()
+        if (player.mediaItemCount > 0) controls.seekToNext()
     }
 
     fun previous() {
-        if (player.mediaItemCount > 0) player.seekToPrevious()
+        if (player.mediaItemCount > 0) controls.seekToPrevious()
     }
 
     fun seekBy(deltaMs: Long) {
         val dur = player.duration
         val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
-        player.seekTo(if (dur > 0) target.coerceAtMost(dur - 100) else target)
+        controls.seekTo(if (dur > 0) target.coerceAtMost(dur - 100) else target)
     }
 
     fun seekToFraction(frac: Float) {
         val dur = player.duration
-        if (dur > 0) player.seekTo((dur * frac.coerceIn(0f, 1f)).toLong())
+        if (dur > 0) controls.seekTo((dur * frac.coerceIn(0f, 1f)).toLong())
     }
 
     fun toggleShuffle() {
@@ -360,10 +364,10 @@ class AudioEngine(
     }
 
     fun changeVolume(delta: Float) {
-        val v = (player.volume + delta).coerceIn(0f, 1f)
-        player.volume = v
+        val v = (settings.volume + delta).coerceIn(0f, 1f)
         volume = v
         settings.volume = v
+        controls.refreshVolume()
     }
 
     /** Volume multimediale del telefono come fattore lineare (0 dB = 1), per la loudness. */
@@ -431,6 +435,18 @@ class AudioEngine(
                 }
             }
         }
+    }
+
+
+    // ------------------------------------------------------------------ volume digitale (DVC)
+
+    /** Alza o abbassa il volume digitale di 2 dB; false se il DVC è spento (allora decide Android). */
+    fun stepDvc(up: Boolean): Boolean {
+        val s = settings.dsp
+        if (!s.master || !s.dvc) return false
+        val v = (s.dvcDb + if (up) 2f else -2f).coerceIn(DspSettings.DVC_MIN_DB, 0f)
+        if (v != s.dvcDb) settings.updateDsp { it.copy(dvcDb = v) }
+        return true
     }
 
 }

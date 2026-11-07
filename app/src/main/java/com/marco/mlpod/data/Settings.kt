@@ -65,6 +65,9 @@ class Settings(context: Context) {
     /** 0 = giorno, 1 = notte, 2 = segui il sistema */
     var themeMode by IntPref(sp, "theme_mode", 2)
     var coverInMenu by BoolPref(sp, "cover_in_menu", true)
+
+    /** Curva dell'equalizzatore fissata in alto: scorrendo diventa una striscia compatta. */
+    var curvePinned by BoolPref(sp, "curve_pinned", true)
     var keepScreenOn by BoolPref(sp, "keep_screen_on", false)
 
     /** Sensibilità dell'analizzatore (offset di visualizzazione in dB, -24..+24) */

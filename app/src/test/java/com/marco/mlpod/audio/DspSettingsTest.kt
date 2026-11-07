@@ -20,6 +20,20 @@ class DspSettingsTest {
     }
 
     @Test
+    fun dvcAndFadesReachTheEngineAndSurviveJson() {
+        val d = DspSettings()
+        assertFalse(d.dvc); assertTrue(d.fades)
+        val s = DspSettings(master = true, dvc = true, dvcDb = -24f, fades = false)
+        val m = map(s.toNative())
+        assertEquals("1", m["dvc"]); assertEquals(-24.0, m["dvc.db"]!!.toDouble(), 1e-6)
+        val back = DspSettings.fromJson(s.toJson().toString())
+        assertTrue(back.dvc); assertEquals(-24f, back.dvcDb, 0f); assertFalse(back.fades)
+        // valori fuori scala vengono riportati nei limiti
+        val clamped = DspSettings.fromJson(s.copy(dvcDb = -200f).toJson().toString())
+        assertEquals(DspSettings.DVC_MIN_DB, clamped.dvcDb, 0f)
+    }
+
+    @Test
     fun everyBandCountHasItsFrequencies() {
         for (n in DspSettings.BAND_OPTIONS) {
             val f = DspSettings.freqsFor(n)

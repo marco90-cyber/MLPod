@@ -48,6 +48,11 @@ struct Params {
     int dbfbMode = 0;             // 0 = spento, 1 = normale, 2 = alto
     bool loudnessOn = false; double loudnessAmount = 0.7, volume = 1.0;
 
+    // Volume digitale (DVC): il volume dell'app e' applicato nel DSP. L'attenuazione del volume fa
+    // da margine per i rinforzi, quindi l'headroom automatico non abbassa piu' il segnale
+    // finche' il volume e' sotto il rinforzo massimo.
+    bool dvcOn = false; double dvcDb = 0;
+
     bool limOn = true; double limThr = -0.5, limRel = 80;
 
     bool dcOn = false;            // filtro anti-DC (10 Hz); l'app lo accende di serie
@@ -123,6 +128,8 @@ inline void apply(Params& p, const std::string& k, const std::string& v) {
     else if (is("loud")) p.loudnessOn = b;
     else if (is("loud.amount")) p.loudnessAmount = clampd(d, 0, 1);
     else if (is("volume")) p.volume = clampd(d, 0, 1);
+    else if (is("dvc")) p.dvcOn = b;
+    else if (is("dvc.db")) p.dvcDb = clampd(d, -80, 0);
     else if (is("lim")) p.limOn = b;
     else if (is("lim.thr")) p.limThr = clampd(d, -12, 0);
     else if (is("lim.rel")) p.limRel = clampd(d, 5, 1000);

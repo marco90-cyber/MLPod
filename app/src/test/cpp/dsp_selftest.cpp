@@ -205,6 +205,27 @@ static void testHeadroom() {
     CHECK(e.limiterMinGainDb() > -0.3, MSG("headroom: limiter quasi inattivo (%.2f dB)", e.limiterMinGainDb()));
 }
 
+static void testDvc() {
+    // bassi +10 dB: senza DVC l'headroom toglie ~10 dB; con il volume digitale a -20 dB il rinforzo
+    // sta nel margine del volume (nessun taglio in piu'); a -4 dB si toglie solo la parte scoperta
+    Engine a; a.configure(48000, 2); a.setParams("master=1;bass=10;headroom=1;lim=1");
+    const double head = a.headroomDb();
+    Engine b; b.configure(48000, 2); b.setParams("master=1;bass=10;headroom=1;lim=1;dvc=1;dvc.db=-20");
+    CHECK(std::fabs(b.inputGainDb() + 20.0) < 0.01 && b.headroomDb() < 1e-9,
+          MSG("DVC: volume -20 dB copre il rinforzo (ingresso %.2f dB, headroom %.2f dB)", b.inputGainDb(), b.headroomDb()));
+    CHECK(b.inputGainDb() - (a.inputGainDb() - 20.0) > 9.0,
+          MSG("DVC: %.1f dB guadagnati rispetto a headroom + volume separati", b.inputGainDb() - (a.inputGainDb() - 20.0)));
+    Engine c; c.configure(48000, 2); c.setParams("master=1;bass=10;headroom=1;lim=1;dvc=1;dvc.db=-4");
+    CHECK(std::fabs(c.inputGainDb() + head) < 0.01, MSG("DVC: volume -4 dB, ingresso = -headroom (%.2f dB)", c.inputGainDb()));
+    // un seno a -1 dBFS sui bassi rinforzati, volume -20 dB: nessun intervento del limiter
+    const int sr = 48000;
+    auto x = sine(sr, 2, 40, std::pow(10.0, -1 / 20.0), sr * 2);
+    runE(b, x, 2);
+    CHECK(b.limiterMinGainDb() > -0.01, MSG("DVC: limiter inattivo (%.2f dB)", b.limiterMinGainDb()));
+    CHECK(std::fabs(gainDbAt("master=1;headroom=1;dvc=1;dvc.db=-12;lim=0", 1000) + 12.0) < 0.05,
+          MSG("DVC: guadagno misurato a 1 kHz = volume (%.2f dB)", gainDbAt("master=1;headroom=1;dvc=1;dvc.db=-12;lim=0", 1000)));
+}
+
 static void testLimiter() {
     Engine e; e.configure(44100, 2); e.setParams("master=1;lim=1;lim.thr=-1;headroom=0;pre=12");
     std::mt19937 rng(3); std::normal_distribution<double> nd(0, 0.3);
@@ -542,6 +563,7 @@ int main() {
     testTone();
     testRamp();
     testHeadroom();
+    testDvc();
     testLimiter();
     testAir();
     testBass();

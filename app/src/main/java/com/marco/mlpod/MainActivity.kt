@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -38,6 +39,15 @@ class MainActivity : ComponentActivity(), Actions {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             AppLog.i("App", "Permesso notifiche: ${if (granted) "concesso" else "negato"}")
         }
+
+    /** Con il volume digitale (DVC) acceso i tasti del volume regolano il volume dell'app. */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val up = keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        if (up || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if ((application as MLPodApp).engine.stepDvc(up)) return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(

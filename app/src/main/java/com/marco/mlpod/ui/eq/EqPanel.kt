@@ -4,6 +4,12 @@ import com.marco.mlpod.ui.AppEnv
 import com.marco.mlpod.ui.Knob
 
 import android.net.Uri
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -38,6 +44,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PushPin as PushPinOutlined
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -152,12 +159,30 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
             }
             MlSwitch(s.master) { on -> env.feedback.tapScreen(); settings.updateDsp { it.copy(master = on) } }
         }
+        // curva fissata: resta sopra l'elenco; scorrendo si riduce a una striscia, toccandola torna grande
+        val listState = rememberLazyListState()
+        val pinned = settings.curvePinned
+        var forceBig by remember { mutableStateOf(false) }
+        val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24 } }
+        LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) forceBig = false }
+        if (pinned) {
+            Box(Modifier.padding(horizontal = 12.dp)) {
+                CurveCard(
+                    env, s, compact = scrolled && !forceBig, pinned = true,
+                    onPin = { settings.curvePinned = false }, onExpand = { forceBig = true },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
+            state = listState,
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item(key = "curve") { CurveCard(env, s) }
+            if (!pinned) item(key = "curve") {
+                CurveCard(env, s, compact = false, pinned = false, onPin = { settings.curvePinned = true; forceBig = false }, onExpand = {})
+            }
             // ogni modulo resta sempre al suo posto: spento, la scheda si richiude
             item(key = "eq") {
                 EqCard(
@@ -181,6 +206,8 @@ fun EqPanel(env: AppEnv, appName: String, header: @Composable () -> Unit = {}) {
             item(key = "loud") { LoudnessCard(env, s, mod("loud", s)) }
             item(key = "rg") { ReplayGainCard(env, s, mod("rg", s)) }
             item(key = "headroom") { SimpleCard(env, mod("headroom", s)) }
+            item(key = "dvc") { DvcCard(env, s, mod("dvc", s)) }
+            item(key = "fades") { SimpleCard(env, mod("fades", s)) }
             item(key = "dc") { SimpleCard(env, mod("dc", s)) }
             item(key = "soft") { SimpleCard(env, mod("soft", s)) }
             item(key = "lim") { LimiterCard(env, s, mod("lim", s)) }
@@ -488,6 +515,27 @@ private fun ReplayGainCard(env: AppEnv, s: DspSettings, m: ModInfo) {
 }
 
 @Composable
+private fun DvcCard(env: AppEnv, s: DspSettings, m: ModInfo) {
+    val st = env.settings
+    val info = env.engine.eqProcessor.info
+    val sub = when {
+        !m.on -> m.sub
+        !s.master -> "Accendi il DSP per usarlo"
+        info.headroomDb > 0.05f -> String.format(Locale.ITALY, "Volume %.0f dB · rinforzo oltre il volume: -%.1f dB", s.dvcDb, info.headroomDb)
+        else -> String.format(Locale.ITALY, "Volume %.0f dB · i rinforzi stanno nel margine del volume", s.dvcDb)
+    }
+    ModCard(env, m, sub) {
+        LabeledSlider("Volume", s.dvcDb, DspSettings.DVC_MIN_DB..0f, "${s.dvcDb.roundToInt()} dB") { v ->
+            st.updateDsp { it.copy(dvcDb = v.roundToInt().toFloat()) }
+        }
+        Text(
+            "Con l'app aperta i tasti del volume regolano questo volume (passi di 2 dB).",
+            color = Ml.textFaint, fontSize = 12.sp
+        )
+    }
+}
+
+@Composable
 private fun LimiterCard(env: AppEnv, s: DspSettings, m: ModInfo) {
     val st = env.settings
     val red by produceState(0f, s.limiter) {
@@ -610,6 +658,25 @@ private fun mod(key: String, s: DspSettings): ModInfo = when (key) {
             "I picchi suonano meno duri e il limiter lavora meno.",
         s.softSat,
     ) { d, on -> d.copy(softSat = on, master = d.master || on) }
+    "dvc" -> ModInfo(
+        key, "Volume digitale (DVC)", "Il volume nel DSP: i rinforzi non abbassano più il suono",
+        "Come il Direct Volume Control di Poweramp. Senza DVC l'headroom automatico abbassa l'ingresso di quanto " +
+            "rinforzi, e poi il volume di Android abbassa ancora: i due tagli si sommano. Con il DVC il volume è applicato " +
+            "dentro il motore (in doppia precisione, con una rampa senza scatti) e il suo abbassamento fa già da margine: " +
+            "finché il volume è sotto il rinforzo massimo, EQ e toni non costano nulla. Solo la parte di rinforzo che il " +
+            "volume non copre viene tolta.\n\nUso consigliato: volume del telefono alto (o al massimo con le cuffie " +
+            "cablate) e volume dell'app regolato qui. Con l'app aperta i tasti del volume regolano il DVC; con l'app " +
+            "chiusa regolano il volume di Android. Anche la loudness segue questo volume.",
+        s.dvc,
+    ) { d, on -> d.copy(dvc = on, master = d.master || on) }
+    "fades" -> ModInfo(
+        key, "Dissolvenze anti-click", "Play, pausa e salti senza scatti",
+        "Tagliare l'onda a metà fa un \"click\". Con le dissolvenze il volume sale in 0,22 s quando premi play, scende " +
+            "in 0,14 s prima della pausa e fa una dissolvenza brevissima su salti nel brano e cambio brano a mano " +
+            "(curva a S, senza scalini). Valgono anche dalla notifica, dalle cuffie e dal Bluetooth. Il passaggio " +
+            "automatico da un brano all'altro resta senza pause (gapless).",
+        s.fades,
+    ) { d, on -> d.copy(fades = on) }
     "headroom" -> ModInfo(
         key, "Headroom automatico", "Abbassa l'ingresso di quanto rinforzi",
         "Il motore calcola il rinforzo massimo di equalizzatore, toni e moduli e abbassa l'ingresso di altrettanto: " +
@@ -628,22 +695,43 @@ private fun mod(key: String, s: DspSettings): ModInfo = when (key) {
 // ------------------------------------------------------------------ curva e toni
 
 @Composable
-private fun CurveCard(env: AppEnv, s: DspSettings) {
+private fun CurveCard(env: AppEnv, s: DspSettings, compact: Boolean, pinned: Boolean, onPin: () -> Unit, onExpand: () -> Unit) {
     val res = remember(s) { env.preview.compute(s) }
     val info = env.engine.eqProcessor.info
+    val curveH by animateDpAsState(if (compact) 44.dp else 150.dp, label = "altezza curva")
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Ml.panel).padding(16.dp)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(if (compact) 18.dp else 24.dp)).background(Ml.panel)
+            .then(if (compact) Modifier.clickable { env.feedback.tapScreen(); onExpand() } else Modifier)
+            .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 16.dp)
     ) {
-        Text("Curva", color = Ml.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            if (s.master) "Risposta di EQ, toni e moduli, calcolata dal motore" else "DSP spento: la curva è un'anteprima",
-            color = Ml.textDim, fontSize = 12.sp
-        )
-        Spacer(Modifier.height(8.dp))
-        ResponseCurve(env.preview.freqs, res.response, Modifier.fillMaxWidth().height(150.dp))
-        FreqAxis()
-        Spacer(Modifier.height(6.dp))
-        Text(statusLine(info), color = Ml.textFaint, fontSize = 11.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Curva", color = Ml.text, fontSize = if (compact) 13.sp else 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    when {
+                        compact -> "Tocca per ingrandire"
+                        s.master -> "Risposta di EQ, toni e moduli, calcolata dal motore"
+                        else -> "DSP spento: la curva è un'anteprima"
+                    },
+                    color = Ml.textDim, fontSize = if (compact) 10.sp else 12.sp
+                )
+            }
+            IconButton(onClick = { env.feedback.tapScreen(); onPin() }, modifier = Modifier.size(if (compact) 32.dp else 40.dp)) {
+                Icon(
+                    if (pinned) Icons.Filled.PushPin else Icons.Outlined.PushPinOutlined,
+                    contentDescription = if (pinned) "Sblocca la curva (scorre con l'elenco)" else "Fissa la curva in alto",
+                    tint = if (pinned) Ml.primary else Ml.textDim,
+                    modifier = Modifier.size(if (compact) 18.dp else 22.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(if (compact) 2.dp else 8.dp))
+        ResponseCurve(env.preview.freqs, res.response, Modifier.fillMaxWidth().height(curveH))
+        if (!compact) {
+            FreqAxis()
+            Spacer(Modifier.height(6.dp))
+            Text(statusLine(info), color = Ml.textFaint, fontSize = 11.sp)
+        }
     }
 }
 

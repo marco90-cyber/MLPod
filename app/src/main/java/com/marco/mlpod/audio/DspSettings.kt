@@ -81,6 +81,15 @@ data class DspSettings(
 
     // Livello
     val autoHeadroom: Boolean = true,
+    /**
+     * Volume digitale (DVC, come Poweramp): il volume dell'app è applicato nel DSP e l'attenuazione
+     * fa da margine ai rinforzi. Rende di più con il volume del telefono alto.
+     */
+    val dvc: Boolean = false,
+    /** Volume digitale in dB (-60..0). */
+    val dvcDb: Float = -10f,
+    /** Dissolvenze brevi su play, pausa, salti e cambio brano (niente "click"). */
+    val fades: Boolean = true,
     val limiter: Boolean = true,
     val limiterThresholdDb: Float = -0.5f,
     val limiterReleaseMs: Float = 80f,
@@ -119,6 +128,7 @@ data class DspSettings(
         put("balance", f(balance)); put("expand", f(expand)); put("mono", b(mono)); put("crossfeed", f(crossfeed))
         put("dbfb", dbfbMode)
         put("loud", b(loudness)); put("loud.amount", f(loudnessAmount)); put("volume", String.format(Locale.US, "%.4f", volume))
+        put("dvc", b(dvc)); put("dvc.db", f(dvcDb.coerceIn(DVC_MIN_DB, 0f)))
         put("lim", b(limiter)); put("lim.thr", f(limiterThresholdDb)); put("lim.rel", f(limiterReleaseMs))
         put("clarity", b(clarity)); put("clarity.preset", clarityPreset); put("clarity.amount", f(clarityAmount))
         put("dc", b(dcBlock)); put("soft", b(softSat))
@@ -174,6 +184,7 @@ data class DspSettings(
         o.put("dbfb", dbfbMode)
         o.put("loud", loudness); o.put("loudAmount", loudnessAmount.toDouble())
         o.put("headroom", autoHeadroom)
+        o.put("dvc", dvc); o.put("dvcDb", dvcDb.toDouble()); o.put("fades", fades)
         o.put("lim", limiter); o.put("limThr", limiterThresholdDb.toDouble()); o.put("limRel", limiterReleaseMs.toDouble())
         o.put("rg", replayGain)
         o.put("clarity", clarity); o.put("clarityPreset", clarityPreset); o.put("clarityAmount", clarityAmount.toDouble())
@@ -190,6 +201,8 @@ data class DspSettings(
         const val MIN_FREQ = 20f
         const val MAX_FREQ = 20000f
         const val TONE_MAX_DB = 10f
+        /** Volume digitale minimo (dB). */
+        const val DVC_MIN_DB = -60f
 
         /** Numero di bande disponibili (i più usati negli equalizzatori grafici). */
         val BAND_OPTIONS = listOf(3, 5, 7, 10, 15, 31)
@@ -278,6 +291,8 @@ data class DspSettings(
                 crossfeed = o.fl("crossfeed", 0f, 0f, 1f), dbfbMode = o.optInt("dbfb", 0).coerceIn(0, 2),
                 loudness = o.optBoolean("loud", false), loudnessAmount = o.fl("loudAmount", d.loudnessAmount, 0f, 1f),
                 autoHeadroom = o.optBoolean("headroom", true),
+                dvc = o.optBoolean("dvc", false), dvcDb = o.fl("dvcDb", d.dvcDb, DVC_MIN_DB, 0f),
+                fades = o.optBoolean("fades", true),
                 limiter = o.optBoolean("lim", true), limiterThresholdDb = o.fl("limThr", d.limiterThresholdDb, -12f, 0f),
                 limiterReleaseMs = o.fl("limRel", d.limiterReleaseMs, 5f, 1000f),
                 replayGain = o.optInt("rg", 0).coerceIn(0, 2),

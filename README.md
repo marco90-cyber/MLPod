@@ -14,7 +14,7 @@ Lettore musicale per Android in stile **iPod** (click wheel). Tutta l'interfacci
 - Copertine incorporate nei file o file `cover.jpg` / `folder.jpg` nella cartella
 - Formati: MP3, FLAC, WAV, OGG, Opus, AAC, M4A, MKA, AMR (M4A/ALAC dipende dal telefono)
 - **Hi-Res**: uscita float 32 bit, icona HI-RES quando il brano supera 48 kHz o 16 bit
-- **Equalizzatore** di [MLEqualizer](https://github.com/marco90-cyber/Mleq): Parametrico (16 filtri), AutoEQ (oltre 8800 cuffie incluse) e grafico a 3, 5, 7, 10, 15 o 31 bande nella pagina, preamp, toni come Poweramp (frequenza e Q), Analog Bass, Hi-Res Air, Clarity, Surround+ e stereo, DBFB, loudness legata al volume, ReplayGain (tag o misura R128), headroom automatico, filtro anti-DC, saturazione morbida e limiter true-peak; preset AutoEQ/Poweramp
+- **Equalizzatore** di [MLEqualizer](https://github.com/marco90-cyber/Mleq): Parametrico (16 filtri), AutoEQ (oltre 8800 cuffie incluse) e grafico a 3, 5, 7, 10, 15 o 31 bande nella pagina, preamp, toni come Poweramp (frequenza e Q), Analog Bass, Hi-Res Air, Clarity, Surround+ e stereo, DBFB, loudness legata al volume, ReplayGain (tag o misura R128), headroom automatico, filtro anti-DC, saturazione morbida e limiter true-peak, volume digitale (DVC, come Poweramp: i rinforzi non abbassano il suono) e dissolvenze anti-click su play e pausa; curva fissabile in alto; preset AutoEQ/Poweramp
 - **Manopole Bassi e Alti** in stile Poweramp con frequenza selezionabile
 - Riproduzione in background con notifica e controlli multimediali
 
